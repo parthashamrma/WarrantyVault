@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 import { vaultApi } from '../lib/supabase';
 import {
   User,
@@ -16,6 +17,7 @@ import {
 
 export const ProfilePage: React.FC = () => {
   const { user, profile, updateUserProfile, theme, toggleTheme } = useAuth();
+  const toast = useToast();
 
   const [name, setName] = useState(user?.name || '');
   const [reminderDays, setReminderDays] = useState<number[]>(user?.reminder_days || [30, 15, 7]);
@@ -25,14 +27,33 @@ export const ProfilePage: React.FC = () => {
 
   const handleAddDay = () => {
     const val = parseInt(newDayInput);
-    if (!isNaN(val) && val > 0 && !reminderDays.includes(val)) {
-      const updated = [...reminderDays, val].sort((a, b) => b - a);
-      setReminderDays(updated);
-      setNewDayInput('');
+    if (isNaN(val) || val <= 0) {
+      toast.error('Please enter a valid positive day count.');
+      return;
     }
+    if (val > 365) {
+      toast.error('Reminder threshold cannot exceed 365 days.');
+      return;
+    }
+    if (reminderDays.includes(val)) {
+      toast.info(`Reminder at ${val} days is already set.`);
+      return;
+    }
+    if (reminderDays.length >= 10) {
+      toast.error('Maximum of 10 reminder thresholds allowed.');
+      return;
+    }
+
+    const updated = [...reminderDays, val].sort((a, b) => b - a);
+    setReminderDays(updated);
+    setNewDayInput('');
   };
 
   const handleRemoveDay = (day: number) => {
+    if (reminderDays.length <= 1) {
+      toast.error('You must keep at least one reminder threshold.');
+      return;
+    }
     setReminderDays(reminderDays.filter((d) => d !== day));
   };
 
@@ -44,8 +65,10 @@ export const ProfilePage: React.FC = () => {
     const res = await updateUserProfile(name, reminderDays);
     if (res.error) {
       setSaveStatus({ success: false, message: res.error });
+      toast.error(res.error, 'Update Failed');
     } else {
       setSaveStatus({ success: true, message: 'Vault profile updated successfully.' });
+      toast.success('Vault profile updated successfully.');
     }
     setSaving(false);
   };

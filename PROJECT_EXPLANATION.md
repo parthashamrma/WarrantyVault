@@ -303,3 +303,4 @@ The codebase includes **16 automated Vitest tests** covering:
    - Click the attached document and demonstrate the 60-second temporary signed URL download.
 7. **Mobile View**:
    - Toggle Chrome DevTools (`Ctrl+Shift+M`) to show the fixed bottom tab bar on mobile screens.
+

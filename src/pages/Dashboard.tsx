@@ -5,6 +5,7 @@ import { vaultApi } from '../lib/supabase';
 import { WarrantyItem } from '../types/database';
 import { StatusBadge } from '../components/StatusBadge';
 import { formatDate } from '../lib/warrantyUtils';
+import { logger } from '../lib/logger';
 import {
   Shield,
   Plus,
@@ -34,7 +35,7 @@ export const Dashboard: React.FC = () => {
           setItems(data);
         }
       } catch (err) {
-        console.error('Failed to load dashboard data:', err);
+        logger.error('Failed to load dashboard data:', err);
       } finally {
         if (active) setLoading(false);
       }

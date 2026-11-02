@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { supabase, isLiveSupabase, vaultApi } from '../lib/supabase';
 import { Profile, UserRole } from '../types/database';
+import { logger } from '../lib/logger';
 
 export interface AuthUser {
   id: string;
@@ -58,7 +59,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setProfile(p);
         setUser({
           id: p.id,
-          email: fallbackUser?.email || (p.role === 'admin' ? 'admin@warrantyvault.app' : 'alex@warrantyvault.app'),
+          email: fallbackUser?.email || '',
           name: p.name,
           role: p.role,
           reminder_days: p.reminder_days || [30, 15, 7],
@@ -67,7 +68,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
     } catch (e) {
-      console.warn('Profile fetch notice:', e);
+      logger.warn('Profile fetch notice:', e);
     }
 
     // Always set authenticated user from fallback if profile table query is null/unmigrated
@@ -147,7 +148,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setProfile(null);
           }
         } catch (e) {
-          console.error('Supabase session load error:', e);
+          logger.error('Supabase session load error:', e);
           if (mounted) {
             setUser(null);
             setProfile(null);
@@ -203,7 +204,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (error.message.includes('Invalid login credentials')) {
           return {
             error:
-              'Invalid email or password. If you haven’t created an account in Supabase yet, click "Get started" to register, or use the Instant Test account below.',
+              'Invalid email or password. If you haven’t created an account yet, click "Get started" to register.',
           };
         }
         if (error.message.includes('Email not confirmed')) {
@@ -273,7 +274,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (error.message.toLowerCase().includes('rate limit') || (error as any).status === 429) {
           return {
             error:
-              'Supabase free email rate limit exceeded (429). In Supabase Dashboard -> Authentication -> Providers -> Email, disable "Confirm email" for instant password signup without SMTP limits. Or use the Instant Test account below.',
+              'Supabase email rate limit reached (429). Please wait a few moments before requesting another confirmation email, or check your inbox.',
           };
         }
         return { error: error.message };
@@ -333,7 +334,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         await supabase.auth.signOut();
       } catch (err) {
-        console.warn('Sign out error:', err);
+        logger.warn('Sign out error:', err);
       }
     }
   };

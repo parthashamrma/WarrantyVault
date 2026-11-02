@@ -5,6 +5,7 @@ import { vaultApi } from '../lib/supabase';
 import { WarrantyItem, WarrantyStatus } from '../types/database';
 import { StatusBadge } from '../components/StatusBadge';
 import { formatDate } from '../lib/warrantyUtils';
+import { logger } from '../lib/logger';
 import {
   Search,
   Filter,
@@ -48,7 +49,7 @@ export const WarrantiesPage: React.FC = () => {
         const data = await vaultApi.fetchWarranties(user.id);
         if (active) setItems(data);
       } catch (err) {
-        console.error('Failed to load warranties:', err);
+        logger.error('Failed to load warranties:', err);
       } finally {
         if (active) setLoading(false);
       }

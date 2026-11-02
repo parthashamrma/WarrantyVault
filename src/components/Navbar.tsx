@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { vaultApi } from '../lib/supabase';
+import { logger } from '../lib/logger';
 import {
   Bell,
   Moon,
@@ -33,7 +34,7 @@ export const Navbar: React.FC = () => {
           setUnreadCount(notifs.filter((n) => !n.is_read).length);
         }
       } catch (e) {
-        console.warn('Could not fetch notifications:', e);
+        logger.warn('Could not fetch notifications:', e);
       }
     };
 
@@ -72,9 +73,9 @@ export const Navbar: React.FC = () => {
             <>
               {/* Desktop links */}
               <div className="hidden md:flex items-center gap-6">
-                <a href="#story">The clock</a>
-                <a href="#features">Features</a>
-                <a href="#how">How it works</a>
+                <a href="/#story">The clock</a>
+                <a href="/#features">Features</a>
+                <a href="/#how">How it works</a>
                 <Link className="btn o sm !py-1.5 !px-3.5 !text-xs whitespace-nowrap" to="/login">
                   Sign in
                 </Link>
@@ -252,21 +253,21 @@ export const Navbar: React.FC = () => {
             {isLanding ? (
               <>
                 <a
-                  href="#story"
+                  href="/#story"
                   onClick={() => setMobileMenuOpen(false)}
                   className="block font-mono text-xs uppercase tracking-widest text-[var(--ink)] py-2 border-b border-[var(--line)]"
                 >
                   The clock
                 </a>
                 <a
-                  href="#features"
+                  href="/#features"
                   onClick={() => setMobileMenuOpen(false)}
                   className="block font-mono text-xs uppercase tracking-widest text-[var(--ink)] py-2 border-b border-[var(--line)]"
                 >
                   Features
                 </a>
                 <a
-                  href="#how"
+                  href="/#how"
                   onClick={() => setMobileMenuOpen(false)}
                   className="block font-mono text-xs uppercase tracking-widest text-[var(--ink)] py-2 border-b border-[var(--line)]"
                 >

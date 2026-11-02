@@ -22,6 +22,8 @@ import {
   INITIAL_DOCUMENTS,
   INITIAL_NOTIFICATIONS,
 } from './mockData';
+import { logger } from './logger';
+import { productSchema, warrantySchema, profileSchema, documentUploadSchema } from './validation';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
@@ -33,6 +35,39 @@ export const isLiveSupabase = Boolean(
   supabaseUrl.startsWith('https://') &&
   !supabaseUrl.includes('placeholder-project')
 );
+
+// ----------------------------------------------------------------------
+// Rate Limiting & Timeout Wrappers (Abuse & Stalled Request Protection)
+// ----------------------------------------------------------------------
+const DEFAULT_TIMEOUT_MS = 15000;
+
+function withTimeout<T>(
+  promise: PromiseLike<T>,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  operation = 'Vault operation'
+): Promise<T> {
+  return Promise.race([
+    Promise.resolve(promise),
+    new Promise<T>((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`${operation} timed out after ${timeoutMs / 1000}s. Please check network connectivity.`)),
+        timeoutMs
+      )
+    ),
+  ]);
+}
+
+const mutationTimestamps = new Map<string, number>();
+
+function checkMutationRateLimit(key: string, minIntervalMs = 800): void {
+  if (import.meta.env.MODE === 'test') return;
+  const now = Date.now();
+  const last = mutationTimestamps.get(key) || 0;
+  if (now - last < minIntervalMs) {
+    throw new Error('Please wait a moment before trying again.');
+  }
+  mutationTimestamps.set(key, now);
+}
 
 // Never use service_role key in frontend!
 export const supabase = createClient(
@@ -65,7 +100,7 @@ function setLocal<T>(key: string, val: T): void {
   try {
     localStorage.setItem(STORAGE_PREFIX + key, JSON.stringify(val));
   } catch (e) {
-    console.error('LocalStorage write failed:', e);
+    logger.error('LocalStorage write failed:', e);
   }
 }
 
@@ -92,18 +127,20 @@ export const vaultApi = {
   async getProfile(userId: string): Promise<Profile | null> {
     if (isLiveSupabase) {
       try {
-        const { data, error } = await supabase
+        const fetchPromise = supabase
           .from('profiles')
           .select('*')
           .eq('id', userId)
           .single();
+
+        const { data, error } = await withTimeout(fetchPromise, DEFAULT_TIMEOUT_MS, 'Profile lookup');
         if (error) {
-          console.warn('Profile fetch warning (schema might not be applied yet):', error.message);
+          logger.warn('Profile fetch warning (schema might not be applied yet):', error.message);
           return null;
         }
         return data as Profile;
       } catch (err) {
-        console.warn('getProfile exception:', err);
+        logger.warn('getProfile exception:', err);
         return null;
       }
     }
@@ -113,13 +150,25 @@ export const vaultApi = {
   },
 
   async updateProfile(userId: string, updates: Partial<Profile>): Promise<Profile> {
+    checkMutationRateLimit(`profile_${userId}`, 400);
+
+    // Input Validation using Zod
+    if (updates.name !== undefined || updates.reminder_days !== undefined) {
+      profileSchema.partial().parse({
+        name: updates.name,
+        reminder_days: updates.reminder_days,
+      });
+    }
+
     if (isLiveSupabase) {
-      const { data, error } = await supabase
+      const updatePromise = supabase
         .from('profiles')
         .update(updates)
         .eq('id', userId)
         .select()
         .single();
+
+      const { data, error } = await withTimeout(updatePromise, DEFAULT_TIMEOUT_MS, 'Profile update');
       if (error) throw error;
       return data as Profile;
     }
@@ -137,13 +186,15 @@ export const vaultApi = {
     if (isLiveSupabase) {
       try {
         // Supabase RLS ensures only records owned by auth.uid() are returned
-        const { data: prods, error: pErr } = await supabase
+        const queryPromise = supabase
           .from('products')
           .select('*, warranties(*, documents(*))')
           .eq('user_id', userId);
 
+        const { data: prods, error: pErr } = await withTimeout(queryPromise, DEFAULT_TIMEOUT_MS, 'Inventory retrieval');
+
         if (pErr) {
-          console.warn('Could not fetch products/warranties from Supabase (tables may not be migrated yet):', pErr.message);
+          logger.warn('Could not fetch products/warranties from Supabase (tables may not be migrated yet):', pErr.message);
           return [];
         }
 
@@ -165,7 +216,7 @@ export const vaultApi = {
         }
         return items.sort((a, b) => a.days_remaining - b.days_remaining);
       } catch (err) {
-        console.warn('fetchWarranties error:', err);
+        logger.warn('fetchWarranties error:', err);
         return [];
       }
     }
@@ -212,39 +263,58 @@ export const vaultApi = {
     },
     files?: File[]
   ): Promise<WarrantyItem> {
+    checkMutationRateLimit(`create_warranty_${userId}`, 800);
+
+    // Schema Validation (Zod)
+    productSchema.parse(productData);
+    warrantySchema.parse(warrantyData);
+    if (files && files.length > 0) {
+      for (const file of files) {
+        documentUploadSchema.parse({ size: file.size, type: file.type });
+      }
+    }
+
     const computedExpiry =
       warrantyData.expiry_date ||
       calculateExpiryDate(warrantyData.purchase_date, warrantyData.duration_months);
 
     if (isLiveSupabase) {
       // 1. Insert product
-      const { data: newProd, error: prodErr } = await supabase
-        .from('products')
-        .insert({
-          user_id: userId,
-          name: productData.name.trim(),
-          brand: productData.brand?.trim() || null,
-          model: productData.model?.trim() || null,
-          serial_no: productData.serial_no?.trim() || null,
-          category: productData.category || 'General',
-        })
-        .select()
-        .single();
+      const { data: newProd, error: prodErr } = await withTimeout(
+        supabase
+          .from('products')
+          .insert({
+            user_id: userId,
+            name: productData.name.trim(),
+            brand: productData.brand?.trim() || null,
+            model: productData.model?.trim() || null,
+            serial_no: productData.serial_no?.trim() || null,
+            category: productData.category || 'General',
+          })
+          .select()
+          .single(),
+        DEFAULT_TIMEOUT_MS,
+        'Create product'
+      );
 
       if (prodErr) throw prodErr;
 
       // 2. Insert warranty
-      const { data: newWar, error: warErr } = await supabase
-        .from('warranties')
-        .insert({
-          product_id: newProd.id,
-          purchase_date: warrantyData.purchase_date,
-          duration_months: warrantyData.duration_months,
-          expiry_date: computedExpiry,
-          coverage_notes: warrantyData.coverage_notes?.trim() || null,
-        })
-        .select()
-        .single();
+      const { data: newWar, error: warErr } = await withTimeout(
+        supabase
+          .from('warranties')
+          .insert({
+            product_id: newProd.id,
+            purchase_date: warrantyData.purchase_date,
+            duration_months: warrantyData.duration_months,
+            expiry_date: computedExpiry,
+            coverage_notes: warrantyData.coverage_notes?.trim() || null,
+          })
+          .select()
+          .single(),
+        DEFAULT_TIMEOUT_MS,
+        'Create warranty'
+      );
 
       if (warErr) throw warErr;
 
@@ -258,12 +328,16 @@ export const vaultApi = {
             file.name
           );
 
-          const { error: uploadErr } = await supabase.storage
-            .from('warranty-docs')
-            .upload(storagePath, file, {
-              contentType: file.type,
-              upsert: false,
-            });
+          const { error: uploadErr } = await withTimeout(
+            supabase.storage
+              .from('warranty-docs')
+              .upload(storagePath, file, {
+                contentType: file.type,
+                upsert: false,
+              }),
+            DEFAULT_TIMEOUT_MS,
+            'Upload document'
+          );
 
           if (!uploadErr) {
             const { data: docData, error: docErr } = await supabase
@@ -367,8 +441,19 @@ export const vaultApi = {
   async updateWarranty(
     warrantyId: string,
     productData: Partial<Product>,
-    warrantyData: Partial<Warranty>
+    warrantyData: Partial<Warranty>,
+    userId?: string
   ): Promise<void> {
+    checkMutationRateLimit(`update_war_${warrantyId}`, 400);
+
+    // Schema Validation (Zod)
+    if (productData.name) {
+      productSchema.partial().parse(productData);
+    }
+    if (warrantyData.purchase_date || warrantyData.duration_months) {
+      warrantySchema.partial().parse(warrantyData);
+    }
+
     if (isLiveSupabase) {
       if (warrantyData.purchase_date && warrantyData.duration_months && !warrantyData.expiry_date) {
         warrantyData.expiry_date = calculateExpiryDate(
@@ -379,11 +464,16 @@ export const vaultApi = {
 
       const { data: war, error: fetchErr } = await supabase
         .from('warranties')
-        .select('product_id')
+        .select('product_id, products!inner(user_id)')
         .eq('id', warrantyId)
         .single();
 
       if (fetchErr) throw fetchErr;
+
+      // IDOR ownership verification
+      if (userId && (war as any)?.products?.user_id && (war as any).products.user_id !== userId) {
+        throw new Error('Unauthorized: You do not own this warranty record.');
+      }
 
       const { error: wErr } = await supabase
         .from('warranties')
@@ -401,7 +491,7 @@ export const vaultApi = {
       return;
     }
 
-    // Local Mock
+    // Local Mock with IDOR check
     const warranties = getLocal<Warranty[]>('warranties', INITIAL_WARRANTIES);
     const products = getLocal<Product[]>('products', INITIAL_PRODUCTS);
 
@@ -409,6 +499,13 @@ export const vaultApi = {
     if (wIdx === -1) throw new Error('Warranty not found');
 
     const war = warranties[wIdx];
+    const prod = products.find((p) => p.id === war.product_id);
+
+    // IDOR verification
+    if (userId && prod && prod.user_id !== userId) {
+      throw new Error('Unauthorized: You do not have ownership of this item.');
+    }
+
     const newPurchaseDate = warrantyData.purchase_date || war.purchase_date;
     const newDuration = warrantyData.duration_months || war.duration_months;
     const newExpiry =
@@ -434,9 +531,23 @@ export const vaultApi = {
     setLocal('warranties', warranties);
   },
 
-  async deleteWarranty(warrantyId: string): Promise<void> {
+  async deleteWarranty(warrantyId: string, userId?: string): Promise<void> {
+    checkMutationRateLimit(`delete_war_${warrantyId}`, 400);
+
     if (isLiveSupabase) {
-      // First find associated storage docs to remove them from private bucket
+      // Find associated product & storage docs with ownership check
+      const { data: war, error: fetchErr } = await supabase
+        .from('warranties')
+        .select('product_id, products!inner(user_id)')
+        .eq('id', warrantyId)
+        .single();
+
+      if (fetchErr) throw fetchErr;
+
+      if (userId && (war as any)?.products?.user_id && (war as any).products.user_id !== userId) {
+        throw new Error('Unauthorized: You do not own this warranty record.');
+      }
+
       const { data: docs } = await supabase
         .from('documents')
         .select('storage_path')
@@ -446,13 +557,6 @@ export const vaultApi = {
         const paths = docs.map((d) => d.storage_path);
         await supabase.storage.from('warranty-docs').remove(paths);
       }
-
-      // Deleting product or warranty will cascade delete in Postgres
-      const { data: war } = await supabase
-        .from('warranties')
-        .select('product_id')
-        .eq('id', warrantyId)
-        .single();
 
       if (war?.product_id) {
         const { error } = await supabase
@@ -464,7 +568,7 @@ export const vaultApi = {
       return;
     }
 
-    // Local Mock
+    // Local Mock with IDOR check
     const warranties = getLocal<Warranty[]>('warranties', INITIAL_WARRANTIES);
     const products = getLocal<Product[]>('products', INITIAL_PRODUCTS);
     const documents = getLocal<WarrantyDocument[]>('documents', INITIAL_DOCUMENTS);
@@ -472,6 +576,11 @@ export const vaultApi = {
 
     const war = warranties.find((w) => w.id === warrantyId);
     if (!war) return;
+
+    const prod = products.find((p) => p.id === war.product_id);
+    if (userId && prod && prod.user_id !== userId) {
+      throw new Error('Unauthorized: You do not have ownership of this item.');
+    }
 
     setLocal('warranties', warranties.filter((w) => w.id !== warrantyId));
     setLocal('products', products.filter((p) => p.id !== war.product_id));
@@ -485,6 +594,11 @@ export const vaultApi = {
     warrantyId: string,
     file: File
   ): Promise<WarrantyDocument> {
+    checkMutationRateLimit(`upload_doc_${warrantyId}`, 500);
+
+    // Schema Validation
+    documentUploadSchema.parse({ size: file.size, type: file.type });
+
     const { storagePath, safeFileName } = generateSafeStoragePath(
       userId,
       warrantyId,
@@ -492,10 +606,14 @@ export const vaultApi = {
     );
 
     if (isLiveSupabase) {
-      // Upload to private bucket
-      const { error: uploadErr } = await supabase.storage
-        .from('warranty-docs')
-        .upload(storagePath, file, { contentType: file.type });
+      // Upload to private bucket with timeout
+      const { error: uploadErr } = await withTimeout(
+        supabase.storage
+          .from('warranty-docs')
+          .upload(storagePath, file, { contentType: file.type }),
+        DEFAULT_TIMEOUT_MS,
+        'Storage upload'
+      );
 
       if (uploadErr) throw uploadErr;
 
@@ -532,14 +650,20 @@ export const vaultApi = {
     return doc;
   },
 
-  async deleteDocument(documentId: string): Promise<void> {
-    if (isLiveSupabase) {
-      const { data: doc, error: fetchErr } = await supabase
-        .from('documents')
-        .select('storage_path')
-        .eq('id', documentId)
-        .single();
+  async deleteDocument(documentId: string, userId?: string): Promise<void> {
+    checkMutationRateLimit(`delete_doc_${documentId}`, 400);
 
+    if (isLiveSupabase) {
+      let query = supabase
+        .from('documents')
+        .select('storage_path, user_id')
+        .eq('id', documentId);
+
+      if (userId) {
+        query = query.eq('user_id', userId);
+      }
+
+      const { data: doc, error: fetchErr } = await query.single();
       if (fetchErr) throw fetchErr;
 
       if (doc?.storage_path) {
@@ -554,16 +678,24 @@ export const vaultApi = {
       return;
     }
 
-    // Local Mock
+    // Local Mock with IDOR check
     const documents = getLocal<WarrantyDocument[]>('documents', INITIAL_DOCUMENTS);
+    const targetDoc = documents.find((d) => d.id === documentId);
+    if (targetDoc && userId && targetDoc.user_id !== userId) {
+      throw new Error('Unauthorized: You do not own this document.');
+    }
     setLocal('documents', documents.filter((d) => d.id !== documentId));
   },
 
   async createSignedUrl(storagePath: string, expiresInSeconds = 60): Promise<string> {
     if (isLiveSupabase) {
-      const { data, error } = await supabase.storage
-        .from('warranty-docs')
-        .createSignedUrl(storagePath, expiresInSeconds);
+      const { data, error } = await withTimeout(
+        supabase.storage
+          .from('warranty-docs')
+          .createSignedUrl(storagePath, expiresInSeconds),
+        DEFAULT_TIMEOUT_MS,
+        'Signed URL generation'
+      );
 
       if (error) throw error;
       return data.signedUrl;
@@ -579,14 +711,18 @@ export const vaultApi = {
   async fetchNotifications(userId: string): Promise<WarrantyNotification[]> {
     if (isLiveSupabase) {
       try {
-        const { data, error } = await supabase
-          .from('notifications')
-          .select('*, warranties(product_id, products(name))')
-          .eq('user_id', userId)
-          .order('sent_at', { ascending: false });
+        const { data, error } = await withTimeout(
+          supabase
+            .from('notifications')
+            .select('*, warranties(product_id, products(name))')
+            .eq('user_id', userId)
+            .order('sent_at', { ascending: false }),
+          DEFAULT_TIMEOUT_MS,
+          'Fetch reminders'
+        );
 
         if (error) {
-          console.warn('Notifications fetch warning:', error.message);
+          logger.warn('Notifications fetch warning:', error.message);
           return [];
         }
         return (data || []).map((n: any) => ({
@@ -600,7 +736,7 @@ export const vaultApi = {
           product_name: n.warranties?.products?.name || 'Protected Product',
         }));
       } catch (err) {
-        console.warn('fetchNotifications error:', err);
+        logger.warn('fetchNotifications error:', err);
         return [];
       }
     }
@@ -611,6 +747,8 @@ export const vaultApi = {
   },
 
   async markNotificationAsRead(id: string): Promise<void> {
+    checkMutationRateLimit(`mark_notif_${id}`, 300);
+
     if (isLiveSupabase) {
       const { error } = await supabase
         .from('notifications')
@@ -630,6 +768,8 @@ export const vaultApi = {
   },
 
   async markAllNotificationsAsRead(userId: string): Promise<void> {
+    checkMutationRateLimit(`mark_all_notifs_${userId}`, 500);
+
     if (isLiveSupabase) {
       const { error } = await supabase
         .from('notifications')
@@ -654,12 +794,16 @@ export const vaultApi = {
     if (isLiveSupabase) {
       try {
         // Calls Postgres function get_admin_stats()
-        const { data, error } = await supabase.rpc('get_admin_stats');
+        const { data, error } = await withTimeout(
+          supabase.rpc('get_admin_stats'),
+          DEFAULT_TIMEOUT_MS,
+          'Admin aggregate metrics'
+        );
         if (!error && data) {
           return data as AdminStats;
         }
       } catch (err) {
-        console.warn('getAdminStats error, falling back to mock stats:', err);
+        logger.warn('getAdminStats error, falling back to mock stats:', err);
       }
     }
 

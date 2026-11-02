@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 import { vaultApi } from '../lib/supabase';
+import { logger } from '../lib/logger';
 import {
   calculateExpiryDate,
   formatDate,
@@ -38,6 +40,7 @@ const CATEGORIES = [
 export const AddWarrantyPage: React.FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const toast = useToast();
 
   // Product Fields
   const [name, setName] = useState('');
@@ -153,10 +156,12 @@ export const AddWarrantyPage: React.FC = () => {
         attachedFiles
       );
 
+      toast.success(`Registered "${created.product.name}" in vault.`);
       navigate(`/warranties/${created.id}`);
     } catch (err: any) {
-      console.error('Failed to create warranty:', err);
+      logger.error('Failed to create warranty:', err);
       setServerError(err.message || 'Failed to save warranty entry');
+      toast.error(err.message || 'Failed to save warranty entry');
       setSubmitting(false);
     }
   };

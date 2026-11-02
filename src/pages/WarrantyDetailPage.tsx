@@ -5,6 +5,7 @@ import { vaultApi } from '../lib/supabase';
 import { WarrantyItem, WarrantyDocument } from '../types/database';
 import { StatusBadge } from '../components/StatusBadge';
 import { ConfirmModal } from '../components/ConfirmModal';
+import { useToast } from '../context/ToastContext';
 import {
   formatDate,
   calculateExpiryDate,
@@ -31,6 +32,7 @@ export const WarrantyDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const { user } = useAuth();
   const navigate = useNavigate();
+  const toast = useToast();
 
   const [item, setItem] = useState<WarrantyItem | null>(null);
   const [loading, setLoading] = useState(true);
@@ -57,7 +59,9 @@ export const WarrantyDetailPage: React.FC = () => {
 
   // Confirmation Modals State
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deletingWarranty, setDeletingWarranty] = useState(false);
   const [docToDelete, setDocToDelete] = useState<WarrantyDocument | null>(null);
+  const [deletingDoc, setDeletingDoc] = useState(false);
 
   const loadData = async () => {
     if (!user || !id) return;
@@ -95,8 +99,9 @@ export const WarrantyDetailPage: React.FC = () => {
       setLoadingSignedUrl(doc.id);
       const signedUrl = await vaultApi.createSignedUrl(doc.storage_path, 60);
       window.open(signedUrl, '_blank', 'noopener,noreferrer');
+      toast.info('Generated 60s temporary signed link.');
     } catch (err: any) {
-      alert('Failed to generate secure signed URL: ' + err.message);
+      toast.error('Failed to generate secure signed URL: ' + err.message);
     } finally {
       setLoadingSignedUrl(null);
     }
@@ -111,15 +116,18 @@ export const WarrantyDetailPage: React.FC = () => {
     const check = validateDocumentFile(file);
     if (!check.valid) {
       setDocError(check.error || 'Invalid file');
+      toast.error(check.error || 'Invalid file');
       return;
     }
 
     try {
       setUploadingDoc(true);
       await vaultApi.uploadDocument(user.id, id, file);
+      toast.success(`Attached "${file.name}" to vault.`);
       await loadData();
     } catch (err: any) {
       setDocError(err.message || 'Failed to upload document');
+      toast.error(err.message || 'Failed to upload document');
     } finally {
       setUploadingDoc(false);
     }
@@ -127,28 +135,32 @@ export const WarrantyDetailPage: React.FC = () => {
 
   // Delete Document
   const confirmDeleteDoc = async () => {
-    if (!docToDelete) return;
+    if (!docToDelete || !user) return;
     try {
-      await vaultApi.deleteDocument(docToDelete.id);
+      setDeletingDoc(true);
+      await vaultApi.deleteDocument(docToDelete.id, user.id);
+      toast.success(`Deleted "${docToDelete.file_name}".`);
       setDocToDelete(null);
       await loadData();
     } catch (err: any) {
-      alert('Failed to delete document: ' + err.message);
+      toast.error('Failed to delete document: ' + err.message);
+    } finally {
+      setDeletingDoc(false);
     }
   };
 
   // Save Edits
   const handleSaveEdit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!id || !item) return;
+    if (!id || !item || !user) return;
 
     if (!editName.trim()) {
-      alert('Product name is required');
+      toast.error('Product name is required');
       return;
     }
 
     if (editDuration <= 0) {
-      alert('Duration must be greater than 0');
+      toast.error('Duration must be greater than 0 months');
       return;
     }
 
@@ -169,13 +181,15 @@ export const WarrantyDetailPage: React.FC = () => {
           duration_months: editDuration,
           expiry_date: computedExpiry,
           coverage_notes: editNotes.trim() || null,
-        }
+        },
+        user.id
       );
 
+      toast.success('Warranty details updated.');
       setIsEditing(false);
       await loadData();
     } catch (err: any) {
-      alert('Failed to update warranty: ' + err.message);
+      toast.error('Failed to update warranty: ' + err.message);
     } finally {
       setSavingEdit(false);
     }
@@ -183,12 +197,15 @@ export const WarrantyDetailPage: React.FC = () => {
 
   // Delete Entire Warranty
   const confirmDeleteWarranty = async () => {
-    if (!id) return;
+    if (!id || !user) return;
     try {
-      await vaultApi.deleteWarranty(id);
+      setDeletingWarranty(true);
+      await vaultApi.deleteWarranty(id, user.id);
+      toast.success('Warranty entry deleted permanently.');
       navigate('/warranties');
     } catch (err: any) {
-      alert('Failed to delete warranty: ' + err.message);
+      toast.error('Failed to delete warranty: ' + err.message);
+      setDeletingWarranty(false);
     }
   };
 
@@ -497,11 +514,11 @@ export const WarrantyDetailPage: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
                   <button
                     onClick={() => handleViewDocument(doc)}
                     disabled={loadingSignedUrl === doc.id}
-                    className="btn sm o !text-xs !py-1 !px-3 flex items-center gap-1 cursor-pointer"
+                    className="btn sm o !text-xs !py-2 !px-3 min-h-[40px] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                     title="Generate secure short-lived signed link to view/download"
                   >
                     <Download className="w-3.5 h-3.5" />
@@ -509,8 +526,9 @@ export const WarrantyDetailPage: React.FC = () => {
                   </button>
                   <button
                     onClick={() => setDocToDelete(doc)}
-                    className="p-1.5 text-[var(--r)] hover:opacity-75 cursor-pointer"
+                    className="min-h-[40px] min-w-[40px] p-2 rounded hover:bg-[var(--r)]/10 text-[var(--r)] hover:opacity-90 flex items-center justify-center cursor-pointer transition"
                     title="Delete document"
+                    aria-label={`Delete ${doc.file_name}`}
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -529,6 +547,7 @@ export const WarrantyDetailPage: React.FC = () => {
         confirmLabel="Yes, Delete Permanently"
         cancelLabel="Keep Warranty"
         isDestructive={true}
+        isLoading={deletingWarranty}
         onConfirm={confirmDeleteWarranty}
         onCancel={() => setShowDeleteModal(false)}
       />
@@ -540,6 +559,7 @@ export const WarrantyDetailPage: React.FC = () => {
         confirmLabel="Delete File"
         cancelLabel="Cancel"
         isDestructive={true}
+        isLoading={deletingDoc}
         onConfirm={confirmDeleteDoc}
         onCancel={() => setDocToDelete(null)}
       />

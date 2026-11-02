@@ -4,6 +4,8 @@ import { useAuth } from '../context/AuthContext';
 import { vaultApi } from '../lib/supabase';
 import { WarrantyNotification } from '../types/database';
 import { formatDate } from '../lib/warrantyUtils';
+import { useToast } from '../context/ToastContext';
+import { logger } from '../lib/logger';
 import {
   Bell,
   CheckCircle2,
@@ -12,12 +14,16 @@ import {
   ArrowRight,
   ShieldAlert,
   Inbox,
+  Loader2,
 } from 'lucide-react';
 
 export const NotificationsPage: React.FC = () => {
   const { user } = useAuth();
+  const toast = useToast();
   const [notifications, setNotifications] = useState<WarrantyNotification[]>([]);
   const [loading, setLoading] = useState(true);
+  const [markingAllRead, setMarkingAllRead] = useState(false);
+  const [markingId, setMarkingId] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'unread'>('all');
 
   const loadNotifications = async () => {
@@ -27,7 +33,8 @@ export const NotificationsPage: React.FC = () => {
       const data = await vaultApi.fetchNotifications(user.id);
       setNotifications(data);
     } catch (err) {
-      console.error('Failed to load notifications:', err);
+      logger.error('Failed to load notifications:', err);
+      toast.error('Failed to refresh reminders.');
     } finally {
       setLoading(false);
     }
@@ -39,24 +46,34 @@ export const NotificationsPage: React.FC = () => {
 
   const handleMarkAsRead = async (id: string) => {
     try {
+      setMarkingId(id);
       await vaultApi.markNotificationAsRead(id);
       setNotifications((prev) =>
         prev.map((n) => (n.id === id ? { ...n, is_read: true, status: 'read' } : n))
       );
-    } catch (err) {
-      console.error('Failed to mark notification read:', err);
+      toast.success('Reminder marked as read.');
+    } catch (err: any) {
+      logger.error('Failed to mark notification read:', err);
+      toast.error(err.message || 'Failed to update reminder.');
+    } finally {
+      setMarkingId(null);
     }
   };
 
   const handleMarkAllRead = async () => {
     if (!user) return;
     try {
+      setMarkingAllRead(true);
       await vaultApi.markAllNotificationsAsRead(user.id);
       setNotifications((prev) =>
         prev.map((n) => ({ ...n, is_read: true, status: 'read' }))
       );
-    } catch (err) {
-      console.error('Failed to mark all read:', err);
+      toast.success('All reminders marked as read.');
+    } catch (err: any) {
+      logger.error('Failed to mark all read:', err);
+      toast.error(err.message || 'Failed to mark reminders as read.');
+    } finally {
+      setMarkingAllRead(false);
     }
   };
 
@@ -80,10 +97,15 @@ export const NotificationsPage: React.FC = () => {
         {unreadCount > 0 && (
           <button
             onClick={handleMarkAllRead}
-            className="btn o sm !text-xs self-start sm:self-auto flex items-center gap-1.5 cursor-pointer"
+            disabled={markingAllRead}
+            className="btn o sm !text-xs self-start sm:self-auto flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
           >
-            <CheckCheck className="w-3.5 h-3.5" />
-            <span>Mark All as Read</span>
+            {markingAllRead ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <CheckCheck className="w-3.5 h-3.5" />
+            )}
+            <span>{markingAllRead ? 'Marking All Read...' : 'Mark All as Read'}</span>
           </button>
         )}
       </div>
@@ -179,9 +201,10 @@ export const NotificationsPage: React.FC = () => {
                 {!n.is_read && (
                   <button
                     onClick={() => handleMarkAsRead(n.id)}
-                    className="text-[var(--mut)] hover:text-[var(--ink)] underline cursor-pointer"
+                    disabled={markingId === n.id}
+                    className="text-[var(--mut)] hover:text-[var(--ink)] underline cursor-pointer disabled:opacity-50"
                   >
-                    Mark as read
+                    {markingId === n.id ? 'Marking...' : 'Mark as read'}
                   </button>
                 )}
                 <Link
