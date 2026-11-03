@@ -227,6 +227,29 @@ export function validatePassword(pw: string): { valid: boolean; error?: string }
   return { valid: true };
 }
 
+/**
+ * Strict Email validation:
+ * - RFC 5322 compliant syntax
+ * - Must have valid domain and TLD (e.g. name@example.com)
+ */
+export function validateEmail(email: string): { valid: boolean; error?: string } {
+  const clean = email.trim();
+  if (!clean) return { valid: false, error: 'That email doesn’t look right. Check for typos.' };
+  const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
+  if (!emailRegex.test(clean) || clean.length > 254) {
+    return { valid: false, error: 'That email doesn’t look right. Check for typos.' };
+  }
+  const parts = clean.split('@');
+  if (parts.length !== 2 || !parts[1].includes('.')) {
+    return { valid: false, error: 'Please enter a complete email with a valid domain (e.g. name@domain.com).' };
+  }
+  const tld = parts[1].split('.').pop() || '';
+  if (tld.length < 2) {
+    return { valid: false, error: 'Please enter a valid domain extension (e.g. .com, .org).' };
+  }
+  return { valid: true };
+}
+
 export const loginSchema = z.object({
   email: z
     .string()

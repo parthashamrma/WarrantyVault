@@ -1,32 +1,23 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { useAuth, OtpFlowType } from '../context/AuthContext';
-import { validateUserName, validatePassword } from '../lib/validation';
+import { useAuth } from '../context/AuthContext';
+import { validateUserName, validatePassword, validateEmail } from '../lib/validation';
 
-type AuthMode = 'login' | 'register' | 'otp' | 'forgot' | 'recovery_password';
+type AuthMode = 'login' | 'register' | 'forgot';
 
 interface AuthPageProps {
-  initialMode?: 'login' | 'register' | 'forgot';
+  initialMode?: AuthMode;
 }
 
 export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => {
   const [mode, setMode] = useState<AuthMode>(initialMode);
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const {
-    user,
-    signIn,
-    signUp,
-    verifyOtp,
-    signInWithOtp,
-    resendOtp,
-    resetPassword,
-    updatePassword,
-  } = useAuth();
+  const { user, signIn, signUp, resetPassword } = useAuth();
 
-  // If already logged in and confirmed, redirect to dashboard or next
+  // Redirect if already logged in
   useEffect(() => {
-    if (user && user.email_confirmed_at) {
+    if (user) {
       const next = searchParams.get('next');
       const target = next && next.startsWith('/') ? next : '/dashboard';
       navigate(target, { replace: true });
@@ -35,13 +26,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
 
   // Sync mode with prop change
   useEffect(() => {
-    if (initialMode === 'login' || initialMode === 'register' || initialMode === 'forgot') {
-      setMode(initialMode);
-    }
+    setMode(initialMode);
   }, [initialMode]);
-
-  // Login sub-type: 'password' or 'otp'
-  const [loginMethod, setLoginMethod] = useState<'password' | 'otp'>('password');
 
   // Form State
   const [name, setName] = useState('');
@@ -50,53 +36,28 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
-  // OTP State
-  const [otpToken, setOtpToken] = useState('');
-  const [otpEmail, setOtpEmail] = useState('');
-  const [otpType, setOtpType] = useState<OtpFlowType>('signup');
-  const [resendCooldown, setResendCooldown] = useState(0);
-
   // Status & Validation State
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
-  const [confirmationNotice, setConfirmationNotice] = useState<string | null>(null);
-  const [forgotSuccess, setForgotSuccess] = useState<string | null>(null);
+  const [successNotice, setSuccessNotice] = useState<string | null>(null);
 
   // Vault Combination Dial State
   const [rot, setRot] = useState(0);
   const [unlocked, setUnlocked] = useState(false);
 
-  // Turn dial on keystrokes
   const turnDial = () => {
     setRot((prev) => prev + 23);
   };
 
-  // Cooldown countdown effect for Resend OTP button
-  useEffect(() => {
-    if (resendCooldown <= 0) return;
-    const timer = setInterval(() => {
-      setResendCooldown((prev) => Math.max(0, prev - 1));
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [resendCooldown]);
-
-  // Check if unverified query param is set
-  useEffect(() => {
-    if (searchParams.get('unverified') === 'true') {
-      setServerError('Your email address is unverified. Please enter the 6-digit verification code to continue.');
-    }
-  }, [searchParams]);
-
-  // Reset errors when switching modes
+  // Reset errors and notifications when switching modes
   useEffect(() => {
     setUnlocked(false);
     setServerError(null);
+    setSuccessNotice(null);
     setErrors({});
     setTouched({});
-    setConfirmationNotice(null);
-    setForgotSuccess(null);
   }, [mode]);
 
   // Password strength meter calculation (4 segments)
@@ -112,7 +73,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
   const score = getPasswordScore(password);
   const strengthHints = ['Weak', 'Weak', 'Okay', 'Good', 'Strong'];
 
-  // Validation Rules
+  // Strict Validation Rules
   const validateField = (field: string, val?: string): string => {
     if (field === 'name') {
       const v = (val !== undefined ? val : name).trim();
@@ -121,10 +82,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
     }
     if (field === 'email') {
       const v = (val !== undefined ? val : email).trim();
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
-      if (!v || !emailRegex.test(v)) {
-        return 'That email doesn’t look right. Check for typos.';
-      }
+      const res = validateEmail(v);
+      if (!res.valid && res.error) return res.error;
     }
     if (field === 'pw') {
       const v = val !== undefined ? val : password;
@@ -140,12 +99,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
       const v = val !== undefined ? val : confirmPassword;
       if (v !== password) return 'Passwords don’t match yet.';
     }
-    if (field === 'otp') {
-      const v = (val !== undefined ? val : otpToken).trim();
-      if (!v || v.length !== 6 || !/^\d{6}$/.test(v)) {
-        return 'Enter the complete 6-digit numerical code.';
-      }
-    }
     return '';
   };
 
@@ -159,7 +112,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
     turnDial();
     if (field === 'name') setName(value);
     if (field === 'email') setEmail(value);
-    if (field === 'otp') setOtpToken(value.replace(/\D/g, '').slice(0, 6));
     if (field === 'pw') {
       setPassword(value);
       if (touched['confirm'] && confirmPassword) {
@@ -169,120 +121,61 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
     }
     if (field === 'confirm') setConfirmPassword(value);
 
-    // Live validation if field was touched or currently has an error
+    // Live validation if touched or has error
     if (touched[field] || errors[field]) {
       const err = validateField(field, value);
       setErrors((prev) => ({ ...prev, [field]: err }));
     }
   };
 
-  // Submit Handler for all flows
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setServerError(null);
-    setConfirmationNotice(null);
-    setForgotSuccess(null);
+    setSuccessNotice(null);
 
-    // 1. LOGIN FLOW
-    if (mode === 'login') {
-      const emailErr = validateField('email', email);
-      if (emailErr) {
-        setErrors({ email: emailErr });
-        setTouched({ email: true });
-        return;
-      }
+    // Validate fields
+    const newErrors: Record<string, string> = {};
+    if (mode === 'register') {
+      const nameErr = validateField('name', name);
+      if (nameErr) newErrors.name = nameErr;
+    }
+    const emailErr = validateField('email', email);
+    if (emailErr) newErrors.email = emailErr;
 
-      if (loginMethod === 'otp') {
-        // Passwordless OTP Login (shouldCreateUser: false mandatory)
-        setSubmitting(true);
-        setRot((prev) => prev + 180);
-        try {
-          const res = await signInWithOtp(email);
-          if (res.error) {
-            setServerError(res.error);
-            setSubmitting(false);
-            return;
-          }
-          setOtpEmail(email);
-          setOtpType('email');
-          setMode('otp');
-          setResendCooldown(60);
-          setConfirmationNotice(`Enter the 6-digit sign-in code sent to ${email}.`);
-        } catch (err: any) {
-          setServerError(err.message || 'Failed to dispatch sign-in code.');
-        } finally {
-          setSubmitting(false);
-        }
-        return;
-      }
-
-      // Password Login
+    if (mode !== 'forgot') {
       const pwErr = validateField('pw', password);
-      if (pwErr) {
-        setErrors({ pw: pwErr });
-        setTouched({ pw: true });
-        return;
-      }
+      if (pwErr) newErrors.pw = pwErr;
+    }
+    if (mode === 'register') {
+      const confErr = validateField('confirm', confirmPassword);
+      if (confErr) newErrors.confirm = confErr;
+    }
 
-      setSubmitting(true);
-      setRot((prev) => prev + 180);
+    if (Object.keys(newErrors).length > 0) {
+      setErrors(newErrors);
+      setTouched({ name: true, email: true, pw: true, confirm: true });
+      return;
+    }
 
-      try {
+    setSubmitting(true);
+    setRot((prev) => prev + 180);
+
+    try {
+      if (mode === 'login') {
         const res = await signIn(email, password);
-        if (res.unverified) {
-          // Block login and redirect to OTP screen
-          setOtpEmail(email);
-          setOtpType('signup');
-          setMode('otp');
-          setResendCooldown(60);
-          setServerError(res.error || 'Your email address is unverified. Enter the 6-digit code sent to your email.');
-          setSubmitting(false);
-          return;
-        }
-
         if (res.error) {
           setServerError(res.error);
           setSubmitting(false);
           return;
         }
 
-        // Login Succeeded
         setUnlocked(true);
         setTimeout(() => {
           const next = searchParams.get('next');
           const target = next && next.startsWith('/') ? next : '/dashboard';
           navigate(target);
         }, 800);
-      } catch (err: any) {
-        setServerError(err.message || 'Failed to sign in.');
-        setSubmitting(false);
-      }
-      return;
-    }
-
-    // 2. SIGNUP FLOW (New users only)
-    if (mode === 'register') {
-      const nameErr = validateField('name', name);
-      const emailErr = validateField('email', email);
-      const pwErr = validateField('pw', password);
-      const confErr = validateField('confirm', confirmPassword);
-
-      const newErrors: Record<string, string> = {};
-      if (nameErr) newErrors.name = nameErr;
-      if (emailErr) newErrors.email = emailErr;
-      if (pwErr) newErrors.pw = pwErr;
-      if (confErr) newErrors.confirm = confErr;
-
-      if (Object.keys(newErrors).length > 0) {
-        setErrors(newErrors);
-        setTouched({ name: true, email: true, pw: true, confirm: true });
-        return;
-      }
-
-      setSubmitting(true);
-      setRot((prev) => prev + 180);
-
-      try {
+      } else if (mode === 'register') {
         const res = await signUp(email, password, name);
         if (res.error) {
           setServerError(res.error);
@@ -290,78 +183,23 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
           return;
         }
 
-        // Do NOT treat as logged in. Transition to 6-digit OTP screen!
-        setOtpEmail(email);
-        setOtpType('signup');
-        setMode('otp');
-        setResendCooldown(60);
-        setConfirmationNotice(`Enter the 6-digit verification code sent to ${email}.`);
-      } catch (err: any) {
-        setServerError(err.message || 'Registration failed.');
-      } finally {
-        setSubmitting(false);
-      }
-      return;
-    }
-
-    // 3. OTP VERIFICATION FLOW
-    if (mode === 'otp') {
-      const otpErr = validateField('otp', otpToken);
-      if (otpErr) {
-        setErrors({ otp: otpErr });
-        setTouched({ otp: true });
-        return;
-      }
-
-      setSubmitting(true);
-      setRot((prev) => prev + 180);
-
-      try {
-        const targetEmail = otpEmail || email;
-        const res = await verifyOtp(targetEmail, otpToken, otpType);
-        if (res.error) {
-          setServerError(res.error);
-          setSubmitting(false);
-          return;
-        }
-
-        // If recovery flow, move to set new password step
-        if (otpType === 'recovery') {
-          setMode('recovery_password');
+        // Account registered!
+        if (res.sessionCreated) {
+          setUnlocked(true);
+          setTimeout(() => {
+            const next = searchParams.get('next');
+            const target = next && next.startsWith('/') ? next : '/dashboard';
+            navigate(target);
+          }, 800);
+        } else {
+          // If confirmation is required by Supabase, switch to login tab with clean notice
+          setMode('login');
           setPassword('');
           setConfirmPassword('');
-          setConfirmationNotice('Identity verified. Please set your new vault master password.');
+          setSuccessNotice('Account registered successfully! Please sign in with your email and password.');
           setSubmitting(false);
-          return;
         }
-
-        // Signup or Email login verification succeeded: Active session created!
-        setUnlocked(true);
-        setTimeout(() => {
-          const next = searchParams.get('next');
-          const target = next && next.startsWith('/') ? next : '/dashboard';
-          navigate(target);
-        }, 800);
-      } catch (err: any) {
-        setServerError(err.message || 'Verification failed. Please try again.');
-        setSubmitting(false);
-      }
-      return;
-    }
-
-    // 4. FORGOT PASSWORD (OTP BASED)
-    if (mode === 'forgot') {
-      const emailErr = validateField('email', email);
-      if (emailErr) {
-        setErrors({ email: emailErr });
-        setTouched({ email: true });
-        return;
-      }
-
-      setSubmitting(true);
-      setRot((prev) => prev + 180);
-
-      try {
+      } else if (mode === 'forgot') {
         const res = await resetPassword(email);
         if (res.error) {
           setServerError(res.error);
@@ -369,79 +207,15 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
           return;
         }
 
-        setOtpEmail(email);
-        setOtpType('recovery');
-        setMode('otp');
-        setResendCooldown(60);
-        setConfirmationNotice(`Enter the 6-digit recovery code sent to ${email}.`);
-      } catch (err: any) {
-        setServerError(err.message || 'Password reset request failed.');
-      } finally {
+        setSuccessNotice('A secure recovery link has been dispatched to your email address.');
         setSubmitting(false);
-      }
-      return;
-    }
-
-    // 5. RECOVERY NEW PASSWORD FLOW
-    if (mode === 'recovery_password') {
-      const pwErr = validateField('pw', password);
-      const confErr = validateField('confirm', confirmPassword);
-
-      const newErrors: Record<string, string> = {};
-      if (pwErr) newErrors.pw = pwErr;
-      if (confErr) newErrors.confirm = confErr;
-
-      if (Object.keys(newErrors).length > 0) {
-        setErrors(newErrors);
-        setTouched({ pw: true, confirm: true });
-        return;
-      }
-
-      setSubmitting(true);
-      setRot((prev) => prev + 180);
-
-      try {
-        const res = await updatePassword(password);
-        if (res.error) {
-          setServerError(res.error);
-          setSubmitting(false);
-          return;
-        }
-
-        setUnlocked(true);
-        setTimeout(() => {
-          navigate('/dashboard');
-        }, 800);
-      } catch (err: any) {
-        setServerError(err.message || 'Failed to update password.');
-        setSubmitting(false);
-      }
-    }
-  };
-
-  // Resend OTP Code Handler
-  const handleResendCode = async () => {
-    if (resendCooldown > 0 || submitting) return;
-    setServerError(null);
-    setSubmitting(true);
-
-    try {
-      const targetEmail = otpEmail || email;
-      const res = await resendOtp(targetEmail, otpType);
-      if (res.error) {
-        setServerError(res.error);
-      } else {
-        setConfirmationNotice(res.message || 'A fresh 6-digit verification code has been dispatched.');
-        setResendCooldown(60);
       }
     } catch (err: any) {
-      setServerError(err.message || 'Could not resend verification code.');
-    } finally {
+      setServerError(err.message || 'An unexpected error occurred');
       setSubmitting(false);
     }
   };
 
-  // Aside copy by mode
   const asideContent = {
     login: {
       eyebrow: 'Welcome back',
@@ -459,16 +233,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
           Start with <em>one</em> warranty.
         </>
       ),
-      text: 'Create an account, then add your first product, date and invoice. The vault watches the calendar.',
-    },
-    otp: {
-      eyebrow: 'Security Check',
-      heading: (
-        <>
-          Verify <em>your key.</em>
-        </>
-      ),
-      text: 'We require a 6-digit one-time code to activate your vault and ensure your records remain strictly yours.',
+      text: 'Create your account first, then log in to manage your warranties, receipts, and alert schedules.',
     },
     forgot: {
       eyebrow: 'Lost the key',
@@ -477,16 +242,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
           We’ll send <em>a new one.</em>
         </>
       ),
-      text: 'Enter your email and we’ll dispatch a secure 6-digit recovery code to reset your password.',
-    },
-    recovery_password: {
-      eyebrow: 'Master Key Update',
-      heading: (
-        <>
-          Secure your <em>vault.</em>
-        </>
-      ),
-      text: 'Set a new strong password for your account to restore complete access.',
+      text: 'Enter your registered email and we’ll send a link to reset your password.',
     },
   }[mode];
 
@@ -582,23 +338,13 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
             </div>
           )}
 
-          {/* Confirmation / Info Notice */}
-          {confirmationNotice && (
+          {/* Success Notice */}
+          {successNotice && (
             <div
               className="mb-4 p-3 border border-[var(--g)] bg-[var(--g)]/10 text-[var(--g)] text-xs font-mono"
               role="status"
             >
-              {confirmationNotice}
-            </div>
-          )}
-
-          {/* Forgot Password Notice */}
-          {forgotSuccess && (
-            <div
-              className="mb-4 p-3 border border-[var(--g)] bg-[var(--g)]/10 text-[var(--g)] text-xs font-mono"
-              role="status"
-            >
-              {forgotSuccess}
+              {successNotice}
             </div>
           )}
 
@@ -607,32 +353,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
             <form onSubmit={handleSubmit} noValidate>
               <h1>Sign in</h1>
               <p className="lede">Pick up where you left off.</p>
-
-              {/* Login Method Toggle */}
-              <div className="flex border border-[var(--line)] rounded mb-5 p-0.5 bg-[var(--bg2)]">
-                <button
-                  type="button"
-                  onClick={() => setLoginMethod('password')}
-                  className={`flex-1 py-1.5 text-xs font-mono uppercase tracking-wider transition ${
-                    loginMethod === 'password'
-                      ? 'bg-[var(--ink)] text-[var(--bg)] font-bold shadow-sm'
-                      : 'text-[var(--mut)] hover:text-[var(--ink)]'
-                  }`}
-                >
-                  Password
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setLoginMethod('otp')}
-                  className={`flex-1 py-1.5 text-xs font-mono uppercase tracking-wider transition ${
-                    loginMethod === 'otp'
-                      ? 'bg-[var(--ink)] text-[var(--bg)] font-bold shadow-sm'
-                      : 'text-[var(--mut)] hover:text-[var(--ink)]'
-                  }`}
-                >
-                  6-Digit OTP
-                </button>
-              </div>
 
               <div className="f">
                 <label htmlFor="le">Email</label>
@@ -652,41 +372,35 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
                 </span>
               </div>
 
-              {loginMethod === 'password' && (
-                <div className="f">
-                  <label htmlFor="lp">Password</label>
-                  <div className="pwrow">
-                    <input
-                      id="lp"
-                      name="pw"
-                      type={showPassword ? 'text' : 'password'}
-                      autoComplete="current-password"
-                      placeholder="••••••••"
-                      value={password}
-                      onChange={(e) => handleInputChange('pw', e.target.value)}
-                      onBlur={() => handleBlur('pw')}
-                      aria-invalid={!!errors.pw}
-                    />
-                    <button
-                      type="button"
-                      className="eye"
-                      onClick={() => setShowPassword(!showPassword)}
-                    >
-                      {showPassword ? 'Hide' : 'Show'}
-                    </button>
-                  </div>
-                  <span className="err" aria-live="polite">
-                    {errors.pw}
-                  </span>
+              <div className="f">
+                <label htmlFor="lp">Password</label>
+                <div className="pwrow">
+                  <input
+                    id="lp"
+                    name="pw"
+                    type={showPassword ? 'text' : 'password'}
+                    autoComplete="current-password"
+                    placeholder="••••••••"
+                    value={password}
+                    onChange={(e) => handleInputChange('pw', e.target.value)}
+                    onBlur={() => handleBlur('pw')}
+                    aria-invalid={!!errors.pw}
+                  />
+                  <button
+                    type="button"
+                    className="eye"
+                    onClick={() => setShowPassword(!showPassword)}
+                  >
+                    {showPassword ? 'Hide' : 'Show'}
+                  </button>
                 </div>
-              )}
+                <span className="err" aria-live="polite">
+                  {errors.pw}
+                </span>
+              </div>
 
               <button className="btn sub" type="submit" disabled={submitting}>
-                {submitting
-                  ? 'Checking…'
-                  : loginMethod === 'otp'
-                  ? 'Send 6-digit code'
-                  : 'Unlock vault'}
+                {submitting ? 'Checking…' : 'Unlock vault'}
               </button>
 
               <p className="alt">
@@ -792,7 +506,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
                 <small className="mhint">
                   {password
                     ? `${strengthHints[score]} (Must include uppercase, lowercase, and number)`
-                    : 'Minimum 8 characters with upper, lower, & number.'}
+                    : 'Minimum 8 characters with uppercase, lowercase, and number.'}
                 </small>
                 <span className="err" aria-live="polite">
                   {errors.pw}
@@ -817,10 +531,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
                 </span>
               </div>
 
-              <p className="fine">
-                WarrantyVault requires email verification via a 6-digit one-time code to activate your vault.
-              </p>
-
               <button className="btn sub" type="submit" disabled={submitting}>
                 {submitting ? 'Creating vault…' : 'Create my vault'}
               </button>
@@ -838,76 +548,11 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
             </form>
           )}
 
-          {/* --- OTP VERIFICATION MODE --- */}
-          {mode === 'otp' && (
-            <form onSubmit={handleSubmit} noValidate>
-              <h1>Enter 6-digit code</h1>
-              <p className="lede">
-                Enter the verification code dispatched to{' '}
-                <strong className="text-[var(--ink)] font-mono">{otpEmail || email}</strong>.
-              </p>
-
-              <div className="f">
-                <label htmlFor="rotp">6-Digit Code</label>
-                <input
-                  id="rotp"
-                  name="otp"
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  maxLength={6}
-                  placeholder="123456"
-                  className="!text-center !font-mono !text-2xl !tracking-[0.5em] !font-bold"
-                  value={otpToken}
-                  onChange={(e) => handleInputChange('otp', e.target.value)}
-                  onBlur={() => handleBlur('otp')}
-                  aria-invalid={!!errors.otp}
-                  autoFocus
-                />
-                <span className="err" aria-live="polite">
-                  {errors.otp}
-                </span>
-              </div>
-
-              <button className="btn sub" type="submit" disabled={submitting}>
-                {submitting ? 'Verifying…' : 'Verify & Unlock Vault'}
-              </button>
-
-              <div className="mt-4 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs font-mono">
-                <button
-                  type="button"
-                  onClick={handleResendCode}
-                  disabled={resendCooldown > 0 || submitting}
-                  className={`underline cursor-pointer ${
-                    resendCooldown > 0
-                      ? 'text-[var(--mut)] cursor-not-allowed no-underline'
-                      : 'text-[var(--ink)] hover:text-[var(--g)]'
-                  }`}
-                >
-                  {resendCooldown > 0
-                    ? `Resend code in ${resendCooldown}s`
-                    : 'Resend code'}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMode('login');
-                    setOtpToken('');
-                  }}
-                  className="text-[var(--mut)] hover:text-[var(--ink)] cursor-pointer"
-                >
-                  ← Use different email
-                </button>
-              </div>
-            </form>
-          )}
-
           {/* --- FORGOT PASSWORD MODE --- */}
           {mode === 'forgot' && (
             <form onSubmit={handleSubmit} noValidate>
               <h1>Reset password</h1>
-              <p className="lede">We’ll send a 6-digit recovery code to verify your identity.</p>
+              <p className="lede">We’ll send a link to reset your master password.</p>
 
               <div className="f">
                 <label htmlFor="fe">Email</label>
@@ -928,7 +573,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
               </div>
 
               <button className="btn sub" type="submit" disabled={submitting}>
-                {submitting ? 'Sending code…' : 'Send recovery code'}
+                {submitting ? 'Sending link…' : 'Send reset link'}
               </button>
 
               <p className="alt">
@@ -940,84 +585,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
                   ← Back to sign in
                 </button>
               </p>
-            </form>
-          )}
-
-          {/* --- RECOVERY NEW PASSWORD MODE --- */}
-          {mode === 'recovery_password' && (
-            <form onSubmit={handleSubmit} noValidate>
-              <h1>Set new password</h1>
-              <p className="lede">Choose a strong master key for your vault.</p>
-
-              <div className="f">
-                <label htmlFor="nwp">New Password</label>
-                <div className="pwrow">
-                  <input
-                    id="nwp"
-                    name="pw"
-                    type={showPassword ? 'text' : 'password'}
-                    autoComplete="new-password"
-                    placeholder="••••••••"
-                    value={password}
-                    onChange={(e) => handleInputChange('pw', e.target.value)}
-                    onBlur={() => handleBlur('pw')}
-                    aria-invalid={!!errors.pw}
-                  />
-                  <button
-                    type="button"
-                    className="eye"
-                    onClick={() => setShowPassword(!showPassword)}
-                  >
-                    {showPassword ? 'Hide' : 'Show'}
-                  </button>
-                </div>
-                <div className="meter">
-                  <i
-                    style={{
-                      background:
-                        score >= 1 ? (score < 2 ? 'var(--r)' : score < 3 ? 'var(--a)' : 'var(--g)') : '',
-                    }}
-                  />
-                  <i
-                    style={{
-                      background:
-                        score >= 2 ? (score < 3 ? 'var(--a)' : 'var(--g)') : '',
-                    }}
-                  />
-                  <i style={{ background: score >= 3 ? 'var(--g)' : '' }} />
-                  <i style={{ background: score >= 4 ? 'var(--g)' : '' }} />
-                </div>
-                <small className="mhint">
-                  {password
-                    ? `${strengthHints[score]} (Must include uppercase, lowercase, and number)`
-                    : 'Minimum 8 characters with upper, lower, & number.'}
-                </small>
-                <span className="err" aria-live="polite">
-                  {errors.pw}
-                </span>
-              </div>
-
-              <div className="f">
-                <label htmlFor="nwpc">Confirm New Password</label>
-                <input
-                  id="nwpc"
-                  name="confirm"
-                  type="password"
-                  autoComplete="new-password"
-                  placeholder="••••••••"
-                  value={confirmPassword}
-                  onChange={(e) => handleInputChange('confirm', e.target.value)}
-                  onBlur={() => handleBlur('confirm')}
-                  aria-invalid={!!errors.confirm}
-                />
-                <span className="err" aria-live="polite">
-                  {errors.confirm}
-                </span>
-              </div>
-
-              <button className="btn sub" type="submit" disabled={submitting}>
-                {submitting ? 'Updating…' : 'Update & Unlock Vault'}
-              </button>
             </form>
           )}
         </div>
