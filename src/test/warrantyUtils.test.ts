@@ -12,6 +12,10 @@ import {
   validateBrand,
   validateProductName,
 } from '../lib/validation';
+import {
+  generateWarrantyEmail,
+  sendWarrantyEmail,
+} from '../lib/emailService';
 
 describe('Warranty Date and Status Calculations', () => {
   it('correctly calculates expiry date from purchase date and duration', () => {
@@ -243,6 +247,67 @@ describe('Warranty Document Authenticity Verification', () => {
     const res = verifyWarrantyDocumentAuthenticity(corruptCard, { brand: 'Sony' });
     expect(res.valid).toBe(false);
     expect(res.error).toContain('corrupt or empty');
+  });
+});
+
+describe('Automated Email Notifications for Warranty Reminders', () => {
+  const sampleContext = {
+    productName: 'OLED Smart Television',
+    brand: 'Sony',
+    model: 'XR-65A80L',
+    serialNo: 'SN-TV-00129',
+    category: 'Appliances',
+    purchaseDate: '2026-01-01',
+    durationMonths: 24,
+    expiryDate: '2028-01-01',
+    daysRemaining: 15,
+    warrantyId: 'war-test-101',
+    recipientEmail: 'alex@warrantyvault.app',
+  };
+
+  it('generates a rich "warranty_started" activation email', () => {
+    const email = generateWarrantyEmail('warranty_started', sampleContext);
+    expect(email.subject).toContain('Coverage Activated: Sony OLED Smart Television');
+    expect(email.title).toBe('Warranty Coverage Activated');
+    expect(email.html).toContain('WARRANTYVAULT');
+    expect(email.html).toContain('COVERAGE ACTIVATED');
+    expect(email.html).toContain('XR-65A80L');
+    expect(email.html).toContain('alex@warrantyvault.app');
+    expect(email.text).toContain('Purchase Date');
+  });
+
+  it('generates an urgent "expiring_soon" reminder email with action advice', () => {
+    const email = generateWarrantyEmail('expiring_soon', sampleContext);
+    expect(email.subject).toContain('15 Days Left: Sony OLED Smart Television Expiring Soon');
+    expect(email.title).toContain('15 Days Left');
+    expect(email.html).toContain('EXPIRING IN 15 DAYS');
+    expect(email.html).toContain('File any eligible warranty claim');
+    expect(email.text).toContain('Days Remaining: 15 Days');
+  });
+
+  it('generates a clear "expired" notice email', () => {
+    const email = generateWarrantyEmail('expired', {
+      ...sampleContext,
+      daysRemaining: 0,
+    });
+    expect(email.subject).toContain('Sony OLED Smart Television Warranty Has Expired');
+    expect(email.title).toBe('Warranty Coverage Expired');
+    expect(email.html).toContain('COVERAGE EXPIRED');
+    expect(email.html).toContain('tax records');
+  });
+
+  it('simulates live email dispatch with delivery receipt', async () => {
+    const email = generateWarrantyEmail('expiring_soon', sampleContext);
+    const result = await sendWarrantyEmail({
+      to: sampleContext.recipientEmail,
+      subject: email.subject,
+      html: email.html,
+      text: email.text,
+      type: 'expiring_soon',
+    });
+    expect(result.success).toBe(true);
+    expect(result.emailId.startsWith('wv-mail-')).toBe(true);
+    expect(result.status).toBe('delivered');
   });
 });
 

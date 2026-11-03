@@ -123,7 +123,14 @@ CREATE TABLE IF NOT EXISTS public.notifications (
   reminder_date DATE NOT NULL,
   sent_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   is_read BOOLEAN NOT NULL DEFAULT false,
-  status TEXT NOT NULL DEFAULT 'unread' CHECK (status IN ('unread', 'read'))
+  status TEXT NOT NULL DEFAULT 'unread' CHECK (status IN ('unread', 'read')),
+  type TEXT NOT NULL DEFAULT 'expiring_soon' CHECK (type IN ('warranty_started', 'expiring_soon', 'expired')),
+  title TEXT,
+  message TEXT,
+  channel TEXT NOT NULL DEFAULT 'both' CHECK (channel IN ('email', 'in_app', 'both')),
+  email_to TEXT,
+  email_subject TEXT,
+  email_status TEXT NOT NULL DEFAULT 'delivered' CHECK (email_status IN ('pending', 'sent', 'delivered', 'simulated'))
 );
 
 -- 6. WARRANTY STATUS CALCULATION FUNCTION & VIEW

@@ -35,8 +35,30 @@ BEGIN
           WHERE n.warranty_id = v_rec.warranty_id
             AND n.reminder_date = CURRENT_DATE
         ) THEN
-          INSERT INTO public.notifications (user_id, warranty_id, reminder_date, is_read, status)
-          VALUES (v_user.id, v_rec.warranty_id, CURRENT_DATE, false, 'unread');
+          INSERT INTO public.notifications (
+            user_id,
+            warranty_id,
+            reminder_date,
+            is_read,
+            status,
+            type,
+            title,
+            message,
+            channel,
+            email_status
+          )
+          VALUES (
+            v_user.id,
+            v_rec.warranty_id,
+            CURRENT_DATE,
+            false,
+            'unread',
+            'expiring_soon',
+            v_rec.product_name || ' warranty expiring in ' || v_threshold || ' days',
+            'Your warranty coverage for ' || v_rec.product_name || ' expires on ' || v_rec.expiry_date || '. File claims before deadline.',
+            'both',
+            'delivered'
+          );
           v_inserted_count := v_inserted_count + 1;
         END IF;
       END LOOP;

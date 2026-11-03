@@ -5,6 +5,7 @@ import {
   Warranty,
   WarrantyDocument,
   WarrantyNotification,
+  NotificationType,
   WarrantyItem,
   AdminStats,
   WarrantyStatus,
@@ -16,6 +17,10 @@ import {
   generateSafeStoragePath,
   verifyWarrantyDocumentAuthenticity,
 } from './warrantyUtils';
+import {
+  createAndDispatchNotification,
+  generateWarrantyEmail,
+} from './emailService';
 import {
   INITIAL_PROFILES,
   INITIAL_PRODUCTS,
@@ -262,7 +267,8 @@ export const vaultApi = {
       expiry_date?: string;
       coverage_notes?: string;
     },
-    files?: File[]
+    files?: File[],
+    userEmail?: string
   ): Promise<WarrantyItem> {
     checkMutationRateLimit(`create_warranty_${userId}`, 800);
 
@@ -371,6 +377,37 @@ export const vaultApi = {
         }
       }
 
+      // Automated email & notification for warranty_started
+      const resolvedEmail = userEmail || 'member@warrantyvault.app';
+      try {
+        const notif = await createAndDispatchNotification({
+          userId,
+          userEmail: resolvedEmail,
+          warranty: newWar,
+          product: newProd,
+          type: 'warranty_started',
+          daysRemaining: getDaysRemaining(computedExpiry),
+        });
+
+        await supabase.from('notifications').insert({
+          user_id: userId,
+          warranty_id: newWar.id,
+          reminder_date: notif.reminder_date,
+          sent_at: notif.sent_at,
+          is_read: false,
+          status: 'unread',
+          type: 'warranty_started',
+          title: notif.title,
+          message: notif.message,
+          channel: 'both',
+          email_to: resolvedEmail,
+          email_subject: notif.email_subject,
+          email_status: notif.email_status,
+        });
+      } catch (err) {
+        logger.warn('Could not auto-dispatch warranty_started notification:', err);
+      }
+
       return {
         ...newWar,
         product: newProd,
@@ -451,6 +488,25 @@ export const vaultApi = {
     setLocal('products', products);
     setLocal('warranties', warranties);
     setLocal('documents', documents);
+
+    // Automated email & in-app notification for warranty_started (Local Mock)
+    const resolvedEmail = userEmail || 'member@warrantyvault.app';
+    try {
+      const notif = await createAndDispatchNotification({
+        userId,
+        userEmail: resolvedEmail,
+        warranty: createdWar,
+        product: createdProd,
+        type: 'warranty_started',
+        daysRemaining: getDaysRemaining(computedExpiry),
+      });
+
+      const notifications = getLocal<WarrantyNotification[]>('notifications', INITIAL_NOTIFICATIONS);
+      notifications.unshift(notif);
+      setLocal('notifications', notifications);
+    } catch (err) {
+      logger.warn('Could not auto-dispatch warranty_started notification:', err);
+    }
 
     return {
       ...createdWar,
@@ -773,7 +829,22 @@ export const vaultApi = {
           sent_at: n.sent_at,
           is_read: n.is_read,
           status: n.is_read ? 'read' : 'unread',
-          product_name: n.warranties?.products?.name || 'Protected Product',
+          product_name: n.product_name || n.warranties?.products?.name || 'Protected Product',
+          brand: n.brand || n.warranties?.products?.brand || undefined,
+          type: n.type || 'expiring_soon',
+          title:
+            n.title ||
+            (n.type === 'warranty_started'
+              ? 'Warranty Coverage Activated'
+              : n.type === 'expired'
+              ? 'Warranty Expired'
+              : 'Warranty Expiring Soon'),
+          message: n.message || `Warranty threshold triggered on ${n.reminder_date}.`,
+          channel: n.channel || 'both',
+          email_to: n.email_to,
+          email_subject: n.email_subject,
+          email_html: n.email_html,
+          email_status: n.email_status || 'delivered',
         }));
       } catch (err) {
         logger.warn('fetchNotifications error:', err);
@@ -782,7 +853,20 @@ export const vaultApi = {
     }
 
     const notifs = getLocal<WarrantyNotification[]>('notifications', INITIAL_NOTIFICATIONS)
-      .filter((n) => n.user_id === userId);
+      .filter((n) => n.user_id === userId)
+      .map((n) => ({
+        ...n,
+        type: n.type || 'expiring_soon',
+        title:
+          n.title ||
+          (n.type === 'warranty_started'
+            ? 'Warranty Coverage Activated'
+            : n.type === 'expired'
+            ? 'Warranty Expired'
+            : 'Warranty Expiring Soon'),
+        message: n.message || `Warranty threshold triggered on ${n.reminder_date}.`,
+        email_status: n.email_status || 'delivered',
+      }));
     return notifs.sort((a, b) => new Date(b.sent_at).getTime() - new Date(a.sent_at).getTime());
   },
 
@@ -827,6 +911,158 @@ export const vaultApi = {
       }
     });
     setLocal('notifications', notifs);
+  },
+
+  async checkAndDispatchReminders(
+    userId: string,
+    userEmail?: string
+  ): Promise<{
+    checked: number;
+    dispatchedCount: number;
+    notifications: WarrantyNotification[];
+  }> {
+    checkMutationRateLimit(`reminders_${userId}`, 500);
+
+    const items = await vaultApi.fetchWarranties(userId);
+    const existingNotifs = await vaultApi.fetchNotifications(userId);
+    const profile = await vaultApi.getProfile(userId);
+    const reminderDays = profile?.reminder_days || [30, 15, 7];
+    const resolvedEmail = userEmail || 'member@warrantyvault.app';
+
+    const newlyDispatched: WarrantyNotification[] = [];
+
+    for (const item of items) {
+      const days = item.days_remaining;
+
+      // 1. Expired Notification & Email
+      if (days <= 0) {
+        const alreadyNotified = existingNotifs.some(
+          (n) => n.warranty_id === item.id && n.type === 'expired'
+        );
+        if (!alreadyNotified) {
+          const notif = await createAndDispatchNotification({
+            userId,
+            userEmail: resolvedEmail,
+            warranty: item,
+            product: item.product,
+            type: 'expired',
+            daysRemaining: days,
+          });
+          newlyDispatched.push(notif);
+        }
+      }
+      // 2. Expiring Soon Notification & Email (matches threshold or <= 30 days)
+      else if (days <= 30) {
+        const isThresholdMatch =
+          reminderDays.includes(days) || days <= 7 || days === 15 || days === 30;
+        const alreadyNotifiedRecently = existingNotifs.some(
+          (n) =>
+            n.warranty_id === item.id &&
+            n.type === 'expiring_soon' &&
+            n.reminder_date === new Date().toISOString().split('T')[0]
+        );
+        if (isThresholdMatch && !alreadyNotifiedRecently) {
+          const notif = await createAndDispatchNotification({
+            userId,
+            userEmail: resolvedEmail,
+            warranty: item,
+            product: item.product,
+            type: 'expiring_soon',
+            daysRemaining: days,
+          });
+          newlyDispatched.push(notif);
+        }
+      }
+      // 3. Warranty Started Notification & Email
+      else {
+        const alreadySentStarted = existingNotifs.some(
+          (n) => n.warranty_id === item.id && n.type === 'warranty_started'
+        );
+        if (!alreadySentStarted) {
+          const notif = await createAndDispatchNotification({
+            userId,
+            userEmail: resolvedEmail,
+            warranty: item,
+            product: item.product,
+            type: 'warranty_started',
+            daysRemaining: days,
+          });
+          newlyDispatched.push(notif);
+        }
+      }
+    }
+
+    if (newlyDispatched.length > 0) {
+      if (isLiveSupabase) {
+        for (const n of newlyDispatched) {
+          await supabase.from('notifications').insert({
+            user_id: userId,
+            warranty_id: n.warranty_id,
+            reminder_date: n.reminder_date,
+            sent_at: n.sent_at,
+            is_read: false,
+            status: 'unread',
+            type: n.type,
+            title: n.title,
+            message: n.message,
+            channel: 'both',
+            email_to: resolvedEmail,
+            email_subject: n.email_subject,
+            email_status: n.email_status,
+          });
+        }
+      } else {
+        const allNotifs = getLocal<WarrantyNotification[]>('notifications', INITIAL_NOTIFICATIONS);
+        allNotifs.unshift(...newlyDispatched);
+        setLocal('notifications', allNotifs);
+      }
+    }
+
+    const refreshed = await vaultApi.fetchNotifications(userId);
+    return {
+      checked: items.length,
+      dispatchedCount: newlyDispatched.length,
+      notifications: refreshed,
+    };
+  },
+
+  async sendTestEmail(
+    userId: string,
+    userEmail: string,
+    type: NotificationType
+  ): Promise<WarrantyNotification> {
+    checkMutationRateLimit(`test_email_${userId}`, 500);
+
+    const items = await vaultApi.fetchWarranties(userId);
+    const sampleItem = items[0] || {
+      id: 'war-sample-' + Date.now(),
+      purchase_date: '2026-01-01',
+      duration_months: 24,
+      expiry_date: '2028-01-01',
+      coverage_notes: 'Includes manufacturer hardware support and repairs.',
+      product: {
+        name: 'OLED Smart Television',
+        brand: 'Sony',
+        category: 'Appliances',
+        model: 'XR-65A80L',
+        serial_no: 'SN-TV-SAMPLE',
+      },
+    };
+
+    const notif = await createAndDispatchNotification({
+      userId,
+      userEmail,
+      warranty: sampleItem as any,
+      product: (sampleItem as any).product,
+      type,
+      daysRemaining: type === 'expiring_soon' ? 15 : type === 'expired' ? 0 : 700,
+    });
+
+    const allNotifs = getLocal<WarrantyNotification[]>('notifications', INITIAL_NOTIFICATIONS);
+    allNotifs.unshift(notif);
+    setLocal('notifications', allNotifs);
+
+    return notif;
   },
 
   // 5. ADMIN AGGREGATE STATS (SECURITY DEFINER)

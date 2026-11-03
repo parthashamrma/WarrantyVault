@@ -220,10 +220,11 @@ export const AddWarrantyPage: React.FC = () => {
           expiry_date: calculatedExpiry,
           coverage_notes: coverageNotes.trim() || undefined,
         },
-        attachedFiles
+        attachedFiles,
+        user.email
       );
 
-      toast.success(`Registered "${created.product.name}" in vault.`);
+      toast.success(`Registered "${created.product.name}". Coverage confirmation email sent to ${user.email}.`);
       navigate(`/warranties/${created.id}`);
     } catch (err: any) {
       logger.error('Failed to create warranty:', err);

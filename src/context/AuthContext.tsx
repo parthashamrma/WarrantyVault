@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { supabase, isLiveSupabase, vaultApi } from '../lib/supabase';
-import { Profile, UserRole } from '../types/database';
+import { Profile, UserRole, EmailNotificationPreferences } from '../types/database';
 import { logger } from '../lib/logger';
 
 export interface AuthUser {
@@ -9,6 +9,7 @@ export interface AuthUser {
   name: string;
   role: UserRole;
   reminder_days: number[];
+  email_notifications?: EmailNotificationPreferences;
   is_explicit_session?: boolean;
 }
 
@@ -22,7 +23,11 @@ interface AuthContextType {
   signUp: (email: string, password: string, name: string) => Promise<{ error?: string; confirmationRequired?: boolean }>;
   signOut: () => Promise<void>;
   resetPassword: (email: string) => Promise<{ error?: string }>;
-  updateUserProfile: (name: string, reminderDays: number[]) => Promise<{ error?: string }>;
+  updateUserProfile: (
+    name: string,
+    reminderDays: number[],
+    emailNotifications?: EmailNotificationPreferences
+  ) => Promise<{ error?: string }>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -357,7 +362,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const updateUserProfile = async (
     name: string,
-    reminderDays: number[]
+    reminderDays: number[],
+    emailNotifications?: EmailNotificationPreferences
   ): Promise<{ error?: string }> => {
     if (!user) return { error: 'Not authenticated' };
 
@@ -365,12 +371,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const updated = await vaultApi.updateProfile(user.id, {
         name: name.trim(),
         reminder_days: reminderDays,
+        email_notifications: emailNotifications,
       });
 
       const updatedUser: AuthUser = {
         ...user,
         name: updated.name,
         reminder_days: updated.reminder_days,
+        email_notifications: updated.email_notifications,
       };
 
       setUser(updatedUser);

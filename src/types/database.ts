@@ -2,11 +2,18 @@ export type UserRole = 'user' | 'admin';
 
 export type WarrantyStatus = 'Active' | 'Expiring Soon' | 'Expired';
 
+export interface EmailNotificationPreferences {
+  warranty_started: boolean;
+  expiring_soon: boolean;
+  expired: boolean;
+}
+
 export interface Profile {
   id: string;
   name: string;
   role: UserRole;
   reminder_days: number[];
+  email_notifications?: EmailNotificationPreferences;
   created_at: string;
 }
 
@@ -54,6 +61,11 @@ export interface WarrantyDocument {
   issuer_stamp?: string;
 }
 
+export type NotificationType =
+  | 'warranty_started'
+  | 'expiring_soon'
+  | 'expired';
+
 export interface WarrantyNotification {
   id: string;
   user_id: string;
@@ -63,6 +75,15 @@ export interface WarrantyNotification {
   is_read: boolean;
   status: 'unread' | 'read';
   product_name?: string;
+  brand?: string;
+  type?: NotificationType;
+  title?: string;
+  message?: string;
+  channel?: 'email' | 'in_app' | 'both';
+  email_to?: string;
+  email_subject?: string;
+  email_html?: string;
+  email_status?: 'sent' | 'delivered' | 'simulated';
 }
 
 export interface WarrantyItem extends Warranty {
