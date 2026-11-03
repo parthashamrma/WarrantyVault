@@ -22,9 +22,10 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
     );
   }
 
-  if (!user) {
+  if (!user || !user.email_confirmed_at) {
     const nextPath = encodeURIComponent(location.pathname + location.search);
-    return <Navigate to={`/login?next=${nextPath}`} replace />;
+    const unverifiedParam = user && !user.email_confirmed_at ? '&unverified=true' : '';
+    return <Navigate to={`/login?next=${nextPath}${unverifiedParam}`} replace />;
   }
 
   if (adminOnly && user.role !== 'admin') {

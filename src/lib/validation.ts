@@ -204,6 +204,29 @@ export const userNameSchema = z
     }
   });
 
+/**
+ * Password complexity validation:
+ * - Minimum 8 characters
+ * - At least one uppercase letter (A-Z)
+ * - At least one lowercase letter (a-z)
+ * - At least one digit (0-9)
+ */
+export function validatePassword(pw: string): { valid: boolean; error?: string } {
+  if (!pw || pw.length < 8) {
+    return { valid: false, error: 'Use at least 8 characters.' };
+  }
+  if (!/[A-Z]/.test(pw)) {
+    return { valid: false, error: 'Password must include at least one uppercase letter (A-Z).' };
+  }
+  if (!/[a-z]/.test(pw)) {
+    return { valid: false, error: 'Password must include at least one lowercase letter (a-z).' };
+  }
+  if (!/\d/.test(pw)) {
+    return { valid: false, error: 'Password must include at least one number (0-9).' };
+  }
+  return { valid: true };
+}
+
 export const loginSchema = z.object({
   email: z
     .string()
@@ -227,7 +250,13 @@ export const registerSchema = z
     password: z
       .string()
       .min(8, 'Use at least 8 characters.')
-      .max(128, 'Password must be 128 characters or less.'),
+      .max(128, 'Password must be 128 characters or less.')
+      .superRefine((val, ctx) => {
+        const check = validatePassword(val);
+        if (!check.valid && check.error) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: check.error });
+        }
+      }),
     confirmPassword: z.string().min(1, 'Please confirm your password.'),
   })
   .refine((data) => data.password === data.confirmPassword, {

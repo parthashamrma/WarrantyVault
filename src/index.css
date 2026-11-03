@@ -149,6 +149,7 @@ nav.ref-nav {
   font: 500 .82rem var(--mono);
   letter-spacing: .08em;
   text-transform: uppercase;
+  white-space: nowrap;
   padding: .9em 1.4em;
   border: 1.5px solid var(--ink);
   background: var(--ink);

@@ -58,17 +58,17 @@ export const Navbar: React.FC = () => {
     <>
       <nav className="ref-nav" aria-label="Main Navigation">
         {/* Vault Logo matching Reference SVG */}
-        <Link className="logo" to={user && !isLanding ? "/dashboard" : "/"}>
-          <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true">
+        <Link className="logo shrink-0" to={user && !isLanding ? "/dashboard" : "/"}>
+          <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true" className="shrink-0">
             <rect x="1" y="1" width="18" height="18" rx="3" fill="none" stroke="currentColor" strokeWidth="1.8" />
             <circle cx="10" cy="8.5" r="2.4" fill="currentColor" />
             <path d="M10 10v5" stroke="currentColor" strokeWidth="1.8" />
           </svg>
-          <span>WarrantyVault</span>
+          <span className="font-bold tracking-wider">WarrantyVault</span>
         </Link>
 
         {/* Navigation links & controls */}
-        <div className="links">
+        <div className="links shrink-0">
           {isLanding ? (
             <>
               {/* Desktop links */}
@@ -213,14 +213,20 @@ export const Navbar: React.FC = () => {
               </div>
             </>
           ) : (
-            <>
-              <Link className="btn o sm" to="/login">
+            <div className="flex items-center gap-2">
+              <Link
+                to="/login"
+                className="text-xs font-mono uppercase tracking-wider text-[var(--ink)] px-2.5 py-1.5 border border-[var(--line)] rounded hover:bg-[var(--bg2)] whitespace-nowrap"
+              >
                 Sign in
               </Link>
-              <Link className="btn sm" to="/register">
+              <Link
+                to="/register"
+                className="hidden md:inline-block text-xs font-mono uppercase tracking-wider bg-[var(--ink)] text-[var(--bg)] px-3 py-1.5 border border-[var(--ink)] rounded whitespace-nowrap"
+              >
                 Get started
               </Link>
-            </>
+            </div>
           )}
 
           {/* Theme Switcher */}
