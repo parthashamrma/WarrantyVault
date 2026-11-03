@@ -33,6 +33,11 @@ export interface Warranty {
   updated_at: string;
 }
 
+export type DocumentCategory =
+  | 'Manufacturer Warranty Card'
+  | 'Retail Tax Invoice'
+  | 'Extended Protection Certificate';
+
 export interface WarrantyDocument {
   id: string;
   warranty_id: string;
@@ -42,6 +47,11 @@ export interface WarrantyDocument {
   storage_path: string;
   uploaded_at: string;
   signedUrl?: string;
+  is_authentic?: boolean;
+  document_type?: DocumentCategory;
+  verification_id?: string;
+  security_hash?: string;
+  issuer_stamp?: string;
 }
 
 export interface WarrantyNotification {

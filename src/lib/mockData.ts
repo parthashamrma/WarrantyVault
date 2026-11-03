@@ -147,6 +147,11 @@ export const INITIAL_DOCUMENTS: WarrantyDocument[] = [
     file_type: 'application/pdf',
     storage_path: `${DEMO_USER_ID}/war-001/lg_invoice.pdf`,
     uploaded_at: new Date(Date.now() - 40 * 86400000).toISOString(),
+    is_authentic: true,
+    document_type: 'Retail Tax Invoice',
+    verification_id: 'AUTH-WV-A4B7C9D1',
+    security_hash: '9a3b8c2d1e0f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b',
+    issuer_stamp: 'LG Electronics Authorized BestBuy Invoice Seal',
   },
   {
     id: 'doc-002',
@@ -156,6 +161,11 @@ export const INITIAL_DOCUMENTS: WarrantyDocument[] = [
     file_type: 'image/png',
     storage_path: `${DEMO_USER_ID}/war-001/lg_card.png`,
     uploaded_at: new Date(Date.now() - 39 * 86400000).toISOString(),
+    is_authentic: true,
+    document_type: 'Manufacturer Warranty Card',
+    verification_id: 'AUTH-WV-F8E3D2C1',
+    security_hash: '1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b',
+    issuer_stamp: 'LG Direct Drive 10-Year Warranty Attestation Card',
   },
   {
     id: 'doc-003',
@@ -165,6 +175,11 @@ export const INITIAL_DOCUMENTS: WarrantyDocument[] = [
     file_type: 'application/pdf',
     storage_path: `${DEMO_USER_ID}/war-002/sony_receipt.pdf`,
     uploaded_at: new Date(Date.now() - 30 * 86400000).toISOString(),
+    is_authentic: true,
+    document_type: 'Retail Tax Invoice',
+    verification_id: 'AUTH-WV-3C7E9A2B',
+    security_hash: '3f4e5d6c7b8a901234567890abcdef1234567890abcdef1234567890abcdef12',
+    issuer_stamp: 'Sony Electronics Certified Amazon Retail Receipt',
   },
   {
     id: 'doc-004',
@@ -174,6 +189,11 @@ export const INITIAL_DOCUMENTS: WarrantyDocument[] = [
     file_type: 'application/pdf',
     storage_path: `${DEMO_USER_ID}/war-003/dell_inv.pdf`,
     uploaded_at: new Date(Date.now() - 60 * 86400000).toISOString(),
+    is_authentic: true,
+    document_type: 'Retail Tax Invoice',
+    verification_id: 'AUTH-WV-5D2B1F4A',
+    security_hash: 'abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
+    issuer_stamp: 'Dell Premier Direct Commercial Invoice Seal',
   },
 ];
 

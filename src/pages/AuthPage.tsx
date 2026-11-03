@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { validateUserName } from '../lib/validation';
 
 type AuthMode = 'login' | 'register' | 'forgot';
 
@@ -79,7 +80,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login' }) => 
   const validateField = (field: string, val?: string): string => {
     if (field === 'name') {
       const v = (val !== undefined ? val : name).trim();
-      if (v.length < 2) return 'Tell us what to call you (2+ characters).';
+      const res = validateUserName(v);
+      if (!res.valid && res.error) return res.error;
     }
     if (field === 'email') {
       const v = (val !== undefined ? val : email).trim();

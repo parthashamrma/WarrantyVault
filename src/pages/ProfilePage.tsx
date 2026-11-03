@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { vaultApi } from '../lib/supabase';
+import { validateUserName } from '../lib/validation';
 import {
   User,
   Shield,
@@ -61,6 +62,14 @@ export const ProfilePage: React.FC = () => {
     e.preventDefault();
     setSaving(true);
     setSaveStatus(null);
+
+    const nameCheck = validateUserName(name);
+    if (!nameCheck.valid && nameCheck.error) {
+      setSaveStatus({ success: false, message: nameCheck.error });
+      toast.error(nameCheck.error, 'Invalid Name');
+      setSaving(false);
+      return;
+    }
 
     const res = await updateUserProfile(name, reminderDays);
     if (res.error) {

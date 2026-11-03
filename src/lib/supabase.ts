@@ -14,6 +14,7 @@ import {
   getWarrantyStatus,
   getDaysRemaining,
   generateSafeStoragePath,
+  verifyWarrantyDocumentAuthenticity,
 } from './warrantyUtils';
 import {
   INITIAL_PROFILES,
@@ -339,6 +340,12 @@ export const vaultApi = {
             'Upload document'
           );
 
+          const authCheck = verifyWarrantyDocumentAuthenticity(file, {
+            brand: newProd.brand || undefined,
+            serialNo: newProd.serial_no || undefined,
+            productName: newProd.name,
+          });
+
           if (!uploadErr) {
             const { data: docData, error: docErr } = await supabase
               .from('documents')
@@ -348,6 +355,11 @@ export const vaultApi = {
                 file_name: safeFileName,
                 file_type: file.type,
                 storage_path: storagePath,
+                is_authentic: authCheck.valid && Boolean(authCheck.auth),
+                document_type: authCheck.auth?.documentType || 'Manufacturer Warranty Card',
+                verification_id: authCheck.auth?.verificationId,
+                security_hash: authCheck.auth?.securityHash,
+                issuer_stamp: authCheck.auth?.issuerStamp,
               })
               .select()
               .single();
@@ -408,6 +420,12 @@ export const vaultApi = {
           newWarId,
           file.name
         );
+        const authCheck = verifyWarrantyDocumentAuthenticity(file, {
+          brand: createdProd.brand || undefined,
+          serialNo: createdProd.serial_no || undefined,
+          productName: createdProd.name,
+        });
+
         const doc: WarrantyDocument = {
           id: 'doc-' + Math.random().toString(36).substring(2, 9),
           warranty_id: newWarId,
@@ -416,6 +434,11 @@ export const vaultApi = {
           file_type: file.type,
           storage_path: storagePath,
           uploaded_at: nowIso,
+          is_authentic: authCheck.valid && Boolean(authCheck.auth),
+          document_type: authCheck.auth?.documentType || 'Manufacturer Warranty Card',
+          verification_id: authCheck.auth?.verificationId,
+          security_hash: authCheck.auth?.securityHash,
+          issuer_stamp: authCheck.auth?.issuerStamp,
         };
         createdDocs.push(doc);
       }
@@ -592,12 +615,19 @@ export const vaultApi = {
   async uploadDocument(
     userId: string,
     warrantyId: string,
-    file: File
+    file: File,
+    productContext?: { brand?: string; serialNo?: string; productName?: string }
   ): Promise<WarrantyDocument> {
     checkMutationRateLimit(`upload_doc_${warrantyId}`, 500);
 
     // Schema Validation
     documentUploadSchema.parse({ size: file.size, type: file.type });
+
+    // Document Authenticity Verification
+    const authCheck = verifyWarrantyDocumentAuthenticity(file, productContext);
+    if (!authCheck.valid) {
+      throw new Error(authCheck.error || 'Card Authentication Failed: Only authentic warranty cards or invoices can be used.');
+    }
 
     const { storagePath, safeFileName } = generateSafeStoragePath(
       userId,
@@ -626,6 +656,11 @@ export const vaultApi = {
           file_name: safeFileName,
           file_type: file.type,
           storage_path: storagePath,
+          is_authentic: true,
+          document_type: authCheck.auth?.documentType || 'Manufacturer Warranty Card',
+          verification_id: authCheck.auth?.verificationId,
+          security_hash: authCheck.auth?.securityHash,
+          issuer_stamp: authCheck.auth?.issuerStamp,
         })
         .select()
         .single();
@@ -644,6 +679,11 @@ export const vaultApi = {
       file_type: file.type,
       storage_path: storagePath,
       uploaded_at: new Date().toISOString(),
+      is_authentic: true,
+      document_type: authCheck.auth?.documentType || 'Manufacturer Warranty Card',
+      verification_id: authCheck.auth?.verificationId,
+      security_hash: authCheck.auth?.securityHash,
+      issuer_stamp: authCheck.auth?.issuerStamp,
     };
     documents.push(doc);
     setLocal('documents', documents);

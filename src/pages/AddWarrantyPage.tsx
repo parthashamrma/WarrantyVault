@@ -9,7 +9,14 @@ import {
   formatDate,
   validateDocumentFile,
   getWarrantyStatus,
+  verifyWarrantyDocumentAuthenticity,
+  DocumentAuthenticityResult,
 } from '../lib/warrantyUtils';
+import {
+  validateProductName,
+  validateBrand,
+  VERIFIED_BRANDS,
+} from '../lib/validation';
 import { StatusBadge } from '../components/StatusBadge';
 import {
   ArrowLeft,
@@ -20,7 +27,10 @@ import {
   CheckCircle2,
   Calendar,
   Shield,
+  ShieldCheck,
+  Sparkles,
   HelpCircle,
+  Award,
 } from 'lucide-react';
 
 const CATEGORIES = [
@@ -35,6 +45,21 @@ const CATEGORIES = [
   'Vehicles',
   'Watches',
   'General',
+];
+
+const POPULAR_BRANDS = [
+  'Apple',
+  'Sony',
+  'LG',
+  'Samsung',
+  'Dell',
+  'HP',
+  'Bose',
+  'Dyson',
+  'Asus',
+  'Nintendo',
+  'Google',
+  'Logitech',
 ];
 
 export const AddWarrantyPage: React.FC = () => {
@@ -60,8 +85,9 @@ export const AddWarrantyPage: React.FC = () => {
   // Auto-calculated Expiry Date
   const [calculatedExpiry, setCalculatedExpiry] = useState('');
 
-  // Documents
+  // Documents & Authenticity Verification Map
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
+  const [authMap, setAuthMap] = useState<Record<string, DocumentAuthenticityResult>>({});
   const [fileErrors, setFileErrors] = useState<string[]>([]);
 
   // Form State
@@ -79,44 +105,85 @@ export const AddWarrantyPage: React.FC = () => {
     }
   }, [purchaseDate, durationMonths]);
 
+  // Handle dropping files with strict authenticity verification
   const handleFileDrop = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files) return;
     const files = Array.from(e.target.files);
     const validFiles: File[] = [];
     const errs: string[] = [];
+    const newAuthMap: Record<string, DocumentAuthenticityResult> = { ...authMap };
 
     files.forEach((file) => {
-      const check = validateDocumentFile(file);
-      if (check.valid) {
+      // 1. Basic format & size check
+      const basicCheck = validateDocumentFile(file);
+      if (!basicCheck.valid) {
+        errs.push(`${file.name}: ${basicCheck.error}`);
+        return;
+      }
+
+      // 2. Strict warranty authenticity check
+      const authCheck = verifyWarrantyDocumentAuthenticity(file, {
+        brand: brand || undefined,
+        productName: name || undefined,
+        serialNo: serialNo || undefined,
+      });
+
+      if (authCheck.valid && authCheck.auth) {
         validFiles.push(file);
-      } else if (check.error) {
-        errs.push(`${file.name}: ${check.error}`);
+        newAuthMap[file.name] = authCheck.auth;
+        toast.success(`Authenticity Verified: ${authCheck.auth.documentType} accepted.`);
+      } else {
+        const msg =
+          authCheck.error ||
+          `"${file.name}" failed authenticity verification. Only genuine warranty cards or tax invoices are accepted.`;
+        errs.push(`${file.name}: ${msg}`);
+        toast.error(`Authentication Rejected: "${file.name}" is not a recognized warranty card or invoice.`);
       }
     });
 
     setAttachedFiles((prev) => [...prev, ...validFiles]);
+    setAuthMap(newAuthMap);
     setFileErrors(errs);
   };
 
   const removeFile = (index: number) => {
+    const fileToRemove = attachedFiles[index];
+    if (fileToRemove) {
+      setAuthMap((prev) => {
+        const updated = { ...prev };
+        delete updated[fileToRemove.name];
+        return updated;
+      });
+    }
     setAttachedFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
   const validate = (): boolean => {
     const errs: Record<string, string> = {};
 
-    if (!name.trim()) {
-      errs.name = 'Product name is required.';
+    // 1. Brand validation (warranties must be tied to an authentic manufacturer)
+    const brandCheck = validateBrand(brand);
+    if (!brandCheck.valid && brandCheck.error) {
+      errs.brand = brandCheck.error;
     }
 
+    // 2. Product name validation (random strings / keyboard smashes disallowed)
+    const nameCheck = validateProductName(name, brand);
+    if (!nameCheck.valid && nameCheck.error) {
+      errs.name = nameCheck.error;
+    }
+
+    // 3. Purchase date
     if (!purchaseDate) {
       errs.purchaseDate = 'Purchase date is required.';
     }
 
+    // 4. Duration
     if (!durationMonths || durationMonths <= 0) {
       errs.durationMonths = 'Duration must be greater than 0 months.';
     }
 
+    // 5. Expiry
     if (!calculatedExpiry) {
       errs.expiry = 'Could not calculate a valid expiry date.';
     }
@@ -183,7 +250,7 @@ export const AddWarrantyPage: React.FC = () => {
           Register Product & Warranty
         </h1>
         <p className="text-xs sm:text-sm text-[var(--mut)] mt-1 font-sans">
-          Store product details, automatically calculate expiry dates, and attach private proof of purchase.
+          Store authentic brand warranties, calculate expiry dates, and attach verified proof of purchase.
         </p>
       </div>
 
@@ -195,7 +262,7 @@ export const AddWarrantyPage: React.FC = () => {
       )}
 
       <form onSubmit={handleSubmit} className="space-y-8">
-        {/* Step 1: Product Information */}
+        {/* Step 1: Product & Brand Information */}
         <div className="vault-card p-6 sm:p-8 space-y-6">
           <div className="flex items-center justify-between pb-4 border-b border-[var(--line)]">
             <h3 className="font-serif text-2xl text-[var(--ink)]">1. Product Information</h3>
@@ -203,34 +270,141 @@ export const AddWarrantyPage: React.FC = () => {
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* Brand Selection & Verification */}
             <div className="sm:col-span-2">
-              <label htmlFor="productName" className="block text-xs font-mono uppercase tracking-wider text-[var(--ink)] mb-1.5">
-                Product Name <span className="text-[var(--r)]">*</span>
-              </label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label htmlFor="brand" className="block text-xs font-mono uppercase tracking-wider text-[var(--ink)]">
+                  Manufacturer / Brand <span className="text-[var(--r)]">*</span>
+                </label>
+                <span className="text-[11px] font-mono text-[var(--g)] flex items-center gap-1">
+                  <ShieldCheck className="w-3.5 h-3.5" /> Verified Brands
+                </span>
+              </div>
+
+              {/* Quick Verified Brand Buttons */}
+              <div className="flex flex-wrap gap-1.5 mb-2.5">
+                {POPULAR_BRANDS.map((b) => (
+                  <button
+                    key={b}
+                    type="button"
+                    onClick={() => {
+                      setBrand(b);
+                      setErrors((prev) => {
+                        const copy = { ...prev };
+                        delete copy.brand;
+                        return copy;
+                      });
+                    }}
+                    className={`px-2.5 py-1 text-xs font-mono rounded border transition cursor-pointer ${
+                      brand.toLowerCase() === b.toLowerCase()
+                        ? 'bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)] font-bold'
+                        : 'bg-[var(--bg)] text-[var(--ink)] border-[var(--line)] hover:border-[var(--ink)]'
+                    }`}
+                  >
+                    {b}
+                  </button>
+                ))}
+              </div>
+
+              <input
+                id="brand"
+                type="text"
+                value={brand}
+                onChange={(e) => {
+                  setBrand(e.target.value);
+                  if (errors.brand) {
+                    const chk = validateBrand(e.target.value);
+                    if (chk.valid) {
+                      setErrors((prev) => {
+                        const copy = { ...prev };
+                        delete copy.brand;
+                        return copy;
+                      });
+                    }
+                  }
+                }}
+                onBlur={() => {
+                  const chk = validateBrand(brand);
+                  if (!chk.valid && chk.error) {
+                    setErrors((prev) => ({ ...prev, brand: chk.error || 'Invalid brand.' }));
+                  }
+                }}
+                placeholder="Select above or type genuine brand (e.g. Apple, Sony, LG, Dell)"
+                className="vault-input"
+                aria-invalid={!!errors.brand}
+              />
+              {errors.brand && <p className="text-[var(--r)] text-xs font-mono mt-1">{errors.brand}</p>}
+            </div>
+
+            {/* Authentic Brand Presets */}
+            {brand && VERIFIED_BRANDS[brand] && (
+              <div className="sm:col-span-2 p-3 bg-[var(--bg2)]/50 border border-[var(--line)] rounded space-y-2">
+                <div className="flex items-center gap-1.5 text-xs font-mono text-[var(--ink)]">
+                  <Sparkles className="w-3.5 h-3.5 text-[var(--g)]" />
+                  <span>Authentic {brand} models (click to fill product name):</span>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {VERIFIED_BRANDS[brand].map((modelPreset) => (
+                    <button
+                      key={modelPreset}
+                      type="button"
+                      onClick={() => {
+                        setName(modelPreset);
+                        setErrors((prev) => {
+                          const copy = { ...prev };
+                          delete copy.name;
+                          return copy;
+                        });
+                      }}
+                      className={`text-[11px] font-mono px-2 py-0.5 rounded border border-[var(--line)] bg-[var(--bg)] text-[var(--ink)] hover:border-[var(--ink)] cursor-pointer transition ${
+                        name === modelPreset ? 'ring-2 ring-[var(--g)] font-bold' : ''
+                      }`}
+                    >
+                      + {modelPreset}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Product Name */}
+            <div className="sm:col-span-2">
+              <div className="flex items-center justify-between mb-1.5">
+                <label htmlFor="productName" className="block text-xs font-mono uppercase tracking-wider text-[var(--ink)]">
+                  Product Name <span className="text-[var(--r)]">*</span>
+                </label>
+                <span className="text-[11px] font-mono text-[var(--mut)]">
+                  No random strings or keyboard smashes
+                </span>
+              </div>
               <input
                 id="productName"
                 type="text"
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  if (errors.name) {
+                    const chk = validateProductName(e.target.value, brand);
+                    if (chk.valid) {
+                      setErrors((prev) => {
+                        const copy = { ...prev };
+                        delete copy.name;
+                        return copy;
+                      });
+                    }
+                  }
+                }}
+                onBlur={() => {
+                  const chk = validateProductName(name, brand);
+                  if (!chk.valid && chk.error) {
+                    setErrors((prev) => ({ ...prev, name: chk.error || 'Invalid product name.' }));
+                  }
+                }}
                 placeholder="e.g. LG Front-Load Washer, Sony Headphones, MacBook Pro"
                 className="vault-input"
                 aria-invalid={!!errors.name}
               />
               {errors.name && <p className="text-[var(--r)] text-xs font-mono mt-1">{errors.name}</p>}
-            </div>
-
-            <div>
-              <label htmlFor="brand" className="block text-xs font-mono uppercase tracking-wider text-[var(--ink)] mb-1.5">
-                Brand / Manufacturer
-              </label>
-              <input
-                id="brand"
-                type="text"
-                value={brand}
-                onChange={(e) => setBrand(e.target.value)}
-                placeholder="e.g. Apple, Sony, LG, Dell"
-                className="vault-input"
-              />
             </div>
 
             <div>
@@ -265,7 +439,7 @@ export const AddWarrantyPage: React.FC = () => {
               />
             </div>
 
-            <div>
+            <div className="sm:col-span-2">
               <label htmlFor="serialNo" className="block text-xs font-mono uppercase tracking-wider text-[var(--ink)] mb-1.5">
                 Serial Number
               </label>
@@ -381,13 +555,18 @@ export const AddWarrantyPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Step 3: Private Document Attachments */}
+        {/* Step 3: Authentic Warranty Cards & Documents */}
         <div className="vault-card p-6 sm:p-8 space-y-6">
           <div className="flex items-center justify-between pb-4 border-b border-[var(--line)]">
             <div>
-              <h3 className="font-serif text-2xl text-[var(--ink)]">3. Attach Documents</h3>
+              <div className="flex items-center gap-2">
+                <h3 className="font-serif text-2xl text-[var(--ink)]">3. Attach Authentic Warranty Cards</h3>
+                <span className="px-2 py-0.5 text-[10px] font-mono uppercase rounded bg-[var(--g)]/10 text-[var(--g)] border border-[var(--g)]/30 flex items-center gap-1">
+                  <ShieldCheck className="w-3 h-3" /> Authenticity Protected
+                </span>
+              </div>
               <p className="text-xs text-[var(--mut)] font-mono mt-0.5">
-                Stored in private bucket "warranty-docs" • Signed URLs only • Max 5MB per file
+                Only genuine manufacturer warranty cards, guarantee certificates, or retail tax invoices accepted.
               </p>
             </div>
             <span className="font-mono text-xs text-[var(--mut)] uppercase tracking-wider">Step 3 of 3</span>
@@ -404,10 +583,10 @@ export const AddWarrantyPage: React.FC = () => {
             />
             <UploadCloud className="w-10 h-10 text-[var(--ink)] mx-auto mb-3 opacity-75" />
             <p className="font-serif text-xl text-[var(--ink)]">
-              Drop invoices, receipts, or warranty cards here
+              Drop genuine warranty cards, guarantee slips, or retail invoices
             </p>
             <p className="text-xs font-mono text-[var(--mut)] mt-1">
-              or click to browse from device (PDF, PNG, JPG up to 5 MB)
+              or click to browse from device (PDF, PNG, JPG up to 5 MB) • Verified and cryptographically sealed
             </p>
           </div>
 
@@ -420,32 +599,48 @@ export const AddWarrantyPage: React.FC = () => {
             </div>
           )}
 
-          {/* Attached Files List */}
+          {/* Attached Files List with Authenticity Verification Badges */}
           {attachedFiles.length > 0 && (
             <div className="space-y-2 pt-2">
               <h4 className="font-mono text-xs uppercase tracking-wider text-[var(--mut)]">
-                Attached Files ({attachedFiles.length})
+                Attached & Verified Documents ({attachedFiles.length})
               </h4>
               <div className="divide-y divide-[var(--line)] border border-[var(--line)] rounded bg-[var(--bg)]">
-                {attachedFiles.map((file, idx) => (
-                  <div key={idx} className="p-3 flex items-center justify-between text-xs font-mono">
-                    <div className="flex items-center gap-2 truncate">
-                      <FileText className="w-4 h-4 text-[var(--g)] shrink-0" />
-                      <span className="truncate text-[var(--ink)] font-medium">{file.name}</span>
-                      <span className="text-[var(--mut)]">
-                        ({(file.size / (1024 * 1024)).toFixed(2)} MB)
-                      </span>
+                {attachedFiles.map((file, idx) => {
+                  const auth = authMap[file.name];
+                  return (
+                    <div key={idx} className="p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs font-mono">
+                      <div className="space-y-1 truncate">
+                        <div className="flex items-center gap-2 truncate">
+                          <FileText className="w-4 h-4 text-[var(--g)] shrink-0" />
+                          <span className="truncate text-[var(--ink)] font-semibold">{file.name}</span>
+                          <span className="text-[var(--mut)] text-[11px]">
+                            ({(file.size / (1024 * 1024)).toFixed(2)} MB)
+                          </span>
+                        </div>
+                        {auth && (
+                          <div className="flex flex-wrap items-center gap-2 pl-6">
+                            <span className="inline-flex items-center gap-1 text-[10px] text-[var(--g)] font-bold">
+                              <ShieldCheck className="w-3 h-3 text-[var(--g)]" />
+                              AUTHENTIC {auth.documentType.toUpperCase()}
+                            </span>
+                            <span className="text-[10px] text-[var(--mut)]">
+                              Seal ID: <strong className="text-[var(--ink)]">{auth.verificationId}</strong>
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeFile(idx)}
+                        className="text-[var(--r)] hover:opacity-80 p-1 cursor-pointer self-end sm:self-center"
+                        title="Remove file"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => removeFile(idx)}
-                      className="text-[var(--r)] hover:opacity-80 p-1 cursor-pointer"
-                      title="Remove file"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}

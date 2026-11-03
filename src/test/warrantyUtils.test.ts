@@ -5,7 +5,13 @@ import {
   getWarrantyStatus,
   validateDocumentFile,
   generateSafeStoragePath,
+  verifyWarrantyDocumentAuthenticity,
 } from '../lib/warrantyUtils';
+import {
+  validateUserName,
+  validateBrand,
+  validateProductName,
+} from '../lib/validation';
 
 describe('Warranty Date and Status Calculations', () => {
   it('correctly calculates expiry date from purchase date and duration', () => {
@@ -116,6 +122,127 @@ describe('Document Upload Validation & Path Security', () => {
     expect(safeFileName).not.toContain('!');
     expect(safeFileName).not.toContain('@');
     expect(safeFileName).not.toContain('#');
+  });
+});
+
+describe('User Name, Brand & Product Name Validation', () => {
+  it('validates authentic user names and rejects numbers, symbols, and keyboard smashes', () => {
+    // Valid names
+    expect(validateUserName('Alex Rivera').valid).toBe(true);
+    expect(validateUserName('Jean-Luc Picard').valid).toBe(true);
+    expect(validateUserName("Sarah O'Connor").valid).toBe(true);
+
+    // Invalid: empty or too short
+    expect(validateUserName('').valid).toBe(false);
+    expect(validateUserName('A').valid).toBe(false);
+
+    // Invalid: numbers
+    const numCheck = validateUserName('Alex123');
+    expect(numCheck.valid).toBe(false);
+    expect(numCheck.error).toContain('cannot contain numbers');
+
+    // Invalid: special symbols
+    const symCheck = validateUserName('Parth<script>');
+    expect(symCheck.valid).toBe(false);
+
+    // Invalid: repetitive characters
+    const repCheck = validateUserName('Aaaaaa');
+    expect(repCheck.valid).toBe(false);
+    expect(repCheck.error).toContain('repetitive');
+
+    // Invalid: keyboard smashes
+    const smashCheck = validateUserName('asdfgh');
+    expect(smashCheck.valid).toBe(false);
+  });
+
+  it('validates brand names and rejects empty strings or keyboard smashes', () => {
+    expect(validateBrand('Apple').valid).toBe(true);
+    expect(validateBrand('Sony').valid).toBe(true);
+    expect(validateBrand('B&O Play').valid).toBe(true);
+
+    // Empty or smash
+    expect(validateBrand('').valid).toBe(false);
+    expect(validateBrand('asdf').valid).toBe(false);
+    expect(validateBrand('1111').valid).toBe(false);
+  });
+
+  it('validates authentic product names and rejects random data, numbers, or consonant clusters', () => {
+    // Valid product names
+    expect(validateProductName('WH-1000XM5 Headphones', 'Sony').valid).toBe(true);
+    expect(validateProductName('MacBook Pro 16-inch M3', 'Apple').valid).toBe(true);
+    expect(validateProductName('OLED evo C3 Smart TV', 'LG').valid).toBe(true);
+
+    // Invalid: pure numbers
+    const numCheck = validateProductName('12345678');
+    expect(numCheck.valid).toBe(false);
+    expect(numCheck.error).toContain('must contain letters');
+
+    // Invalid: repetitive characters
+    const repCheck = validateProductName('Waaaaashing Machine');
+    expect(repCheck.valid).toBe(false);
+    expect(repCheck.error).toContain('repetitive');
+
+    // Invalid: keyboard smashes
+    const smashCheck = validateProductName('asdfghjk product');
+    expect(smashCheck.valid).toBe(false);
+    expect(smashCheck.error).toContain('Random character strings cannot be used');
+
+    // Invalid: excessive consonant clusters
+    const clusterCheck = validateProductName('Bcdfghjklm 500');
+    expect(clusterCheck.valid).toBe(false);
+    expect(clusterCheck.error).toContain('unpronounceable');
+  });
+});
+
+describe('Warranty Document Authenticity Verification', () => {
+  it('accepts authentic warranty cards, guarantee slips, and retail invoices', () => {
+    // 200 bytes dummy content
+    const content = new Uint8Array(200);
+
+    const warrantyCard = new File([content], 'Sony_Manufacturer_Warranty_Card.pdf', {
+      type: 'application/pdf',
+    });
+    const cardRes = verifyWarrantyDocumentAuthenticity(warrantyCard, { brand: 'Sony' });
+    expect(cardRes.valid).toBe(true);
+    expect(cardRes.auth?.isAuthentic).toBe(true);
+    expect(cardRes.auth?.documentType).toBe('Manufacturer Warranty Card');
+    expect(cardRes.auth?.verificationId.startsWith('AUTH-WV-')).toBe(true);
+
+    const taxInvoice = new File([content], 'Apple_Store_Retail_Tax_Invoice.pdf', {
+      type: 'application/pdf',
+    });
+    const invRes = verifyWarrantyDocumentAuthenticity(taxInvoice, { brand: 'Apple' });
+    expect(invRes.valid).toBe(true);
+    expect(invRes.auth?.documentType).toBe('Retail Tax Invoice');
+
+    const extendedCert = new File([content], 'AppleCare_Plus_Protection_Plan.pdf', {
+      type: 'application/pdf',
+    });
+    const certRes = verifyWarrantyDocumentAuthenticity(extendedCert, { brand: 'Apple' });
+    expect(certRes.valid).toBe(true);
+    expect(certRes.auth?.documentType).toBe('Extended Protection Certificate');
+  });
+
+  it('rejects files without genuine warranty or invoice markers', () => {
+    const content = new Uint8Array(200);
+    const randomPhoto = new File([content], 'family_vacation_photo.jpg', {
+      type: 'image/jpeg',
+    });
+
+    const res = verifyWarrantyDocumentAuthenticity(randomPhoto, { brand: 'Sony' });
+    expect(res.valid).toBe(false);
+    expect(res.error).toContain('Card Authentication Failed');
+  });
+
+  it('rejects corrupt or empty files (< 100 bytes)', () => {
+    const tinyContent = new Uint8Array(10);
+    const corruptCard = new File([tinyContent], 'genuine_warranty_card.pdf', {
+      type: 'application/pdf',
+    });
+
+    const res = verifyWarrantyDocumentAuthenticity(corruptCard, { brand: 'Sony' });
+    expect(res.valid).toBe(false);
+    expect(res.error).toContain('corrupt or empty');
   });
 });
 
